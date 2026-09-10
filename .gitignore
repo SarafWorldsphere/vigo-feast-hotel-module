@@ -1,0 +1,18 @@
+# Backend
+Backend/.env
+Backend/venv/
+**/__pycache__/
+*.pyc
+
+# Frontend
+food-delivery-restaurant-frontend/node_modules/
+food-delivery-restaurant-frontend/.next/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

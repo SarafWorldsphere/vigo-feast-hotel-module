@@ -1,0 +1,594 @@
+'use client';
+
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { Order, generateOrder, mockMenuItems, MenuItem, mockCategories, Category } from '@/data/mockData';
+import {
+  RegistrationStatus,
+  RegistrationStatusResponse,
+  OwnerRegisterRequest,
+  RegistrationSubmitRequest,
+  apiRegisterOwner,
+  apiLogin,
+  apiLogout,
+  apiRefreshToken,
+  apiGetMe,
+  apiSubmitRegistration,
+  apiGetRegistrationStatus,
+  apiCreateCategory,
+  apiGetCategories,
+} from '@/services/api';
+
+export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
+export type AuthView = 'login' | 'signup' | 'wizard' | 'status' | 'register';
+
+export interface OwnerSession {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+export interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'info' | 'warning';
+  message: string;
+  title?: string;
+}
+
+interface AppState {
+  currentPage: Page;
+  setPage: (p: Page) => void;
+  isAuthenticated: boolean;
+  authView: AuthView;
+  setAuthView: (v: AuthView) => void;
+  owner: OwnerSession | null;
+  registrationStatus: RegistrationStatus;
+  statusDetails: RegistrationStatusResponse | null;
+  setRegistrationStatus: (status: RegistrationStatus) => void;
+  login: (statusOverride?: RegistrationStatus) => Promise<void>;
+  enterDashboard: () => void;
+  logout: () => Promise<void>;
+  registerOwner: (payload: OwnerRegisterRequest) => Promise<void>;
+  submitRegistration: (payload: RegistrationSubmitRequest) => Promise<void>;
+  refreshToken: () => Promise<void>;
+  isOnline: boolean;
+  toggleOnline: () => void;
+  goOfflineFor: (minutes: number) => void;
+  offlineUntil: Date | null;
+  offlineReason: string;
+  setOfflineReason: (r: string) => void;
+  darkMode: boolean;
+  toggleDarkMode: () => void;
+  orders: Order[];
+  addOrder: (o: Order) => void;
+  updateOrderStatus: (id: string, status: Order['status']) => void;
+  selectedOrderId: string | null;
+  setSelectedOrderId: (id: string | null) => void;
+  menuItems: MenuItem[];
+  updateMenuItem: (id: string, updates: Partial<MenuItem>) => void;
+  addMenuItem: (item: MenuItem) => void;
+  categories: Category[];
+  loadCategories: () => Promise<void>;
+  reorderCategories: (newOrder: Category[]) => void;
+  addCategory: (name: string, visible?: boolean) => Promise<Category>;
+  toggleCategoryVisible: (id: string) => void;
+  toasts: Toast[];
+  addToast: (t: Omit<Toast, 'id'>) => void;
+  removeToast: (id: string) => void;
+  soundEnabled: boolean;
+  toggleSound: () => void;
+  newOrderCount: number;
+  clearNewOrderCount: () => void;
+  unreadNotificationCount: number;
+  setUnreadNotificationCount: (n: number) => void;
+  addNotification: (n: { type: string; title: string; message: string }) => void;
+}
+
+const AppContext = createContext<AppState | null>(null);
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authView, setAuthView] = useState<AuthView>('login');
+  const [owner, setOwner] = useState<OwnerSession | null>(null);
+  const [registrationStatus, setStatusState] = useState<RegistrationStatus>('NOT_STARTED');
+  const [statusDetails, setStatusDetails] = useState<RegistrationStatusResponse | null>(null);
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [offlineUntil, setOfflineUntil] = useState<Date | null>(null);
+  const [offlineReason, setOfflineReason] = useState('');
+  const [darkMode, setDarkMode] = useState(false);
+  const [orders, setOrders] = useState<Order[]>(() => {
+    const initial = [...Array.from({ length: 30 }, () => generateOrder())];
+    return initial.sort((a, b) => new Date(b.placedAt).getTime() - new Date(a.placedAt).getTime());
+  });
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(mockMenuItems);
+  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [newOrderCount, setNewOrderCount] = useState(0);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(4);
+
+  // Dark mode
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
+  // Restore offline timer
+  useEffect(() => {
+    if (offlineUntil) {
+      const timer = setInterval(() => {
+        if (new Date() >= offlineUntil) {
+          setIsOnline(true);
+          setOfflineUntil(null);
+          setOfflineReason('');
+        }
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [offlineUntil]);
+
+  // Restore authenticated session & application status on mount
+  useEffect(() => {
+    let isMounted = true;
+    apiGetMe()
+      .then(async (me) => {
+        if (!isMounted) return;
+        setOwner({
+          id: me.id,
+          name: me.name,
+          email: me.email,
+          phone: me.phone,
+        });
+
+        try {
+          const statusRes = await apiGetRegistrationStatus();
+          if (!isMounted) return;
+          setStatusState(statusRes.status);
+          setStatusDetails(statusRes);
+
+          if (statusRes.status === 'APPROVED') {
+            setIsAuthenticated(true);
+            setCurrentPage('dashboard');
+          } else if (statusRes.status === 'NOT_STARTED') {
+            setIsAuthenticated(false);
+            setAuthView('wizard');
+          } else {
+            setIsAuthenticated(false);
+            setAuthView('status');
+          }
+        } catch {
+          // If status fetch fails, keep default wizard if owner is logged in
+          if (isMounted) {
+            setStatusState('NOT_STARTED');
+            setAuthView('wizard');
+          }
+        }
+      })
+      .catch(() => {
+        // Not logged in or expired token, stay on login view
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const addToast = useCallback((t: Omit<Toast, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts((prev) => [...prev, { ...t, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((x) => x.id !== id));
+    }, 4500);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
+  // Silent token refresh using backend /api/v1/auth/refresh
+  const refreshToken = useCallback(async () => {
+    try {
+      await apiRefreshToken();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Set registration status helper
+  const setRegistrationStatus = useCallback((status: RegistrationStatus) => {
+    setStatusState(status);
+    setStatusDetails((prev) => ({
+      ...prev,
+      status,
+      application_id: prev?.application_id || 'APP-782941',
+      restaurant_name: prev?.restaurant_name || 'Narayani Kitchen',
+      rejection_reason:
+        status === 'REJECTED'
+          ? 'FSSAI certificate expired and business PAN name mismatch. Please re-upload verified documents.'
+          : undefined,
+    }));
+    if (status === 'APPROVED') {
+      setIsAuthenticated(true);
+      setCurrentPage('dashboard');
+    }
+  }, []);
+
+  // Step 1: Owner Signup attached to POST /api/v1/auth/register-owner
+  const registerOwner = useCallback(
+    async (payload: OwnerRegisterRequest) => {
+      const res = await apiRegisterOwner(payload);
+      const newOwner: OwnerSession = {
+        id: res.owner_id,
+        name: payload.name,
+        email: payload.email,
+        phone: payload.phone,
+      };
+      setOwner(newOwner);
+      setStatusState('NOT_STARTED');
+      // Auto-login & route straight into Restaurant Registration Wizard
+      setAuthView('wizard');
+      addToast({
+        type: 'success',
+        title: 'Account created!',
+        message: 'Welcome! Complete your restaurant registration to start receiving orders.',
+      });
+    },
+    [addToast]
+  );
+
+  // Step 2: Login attached to backend /api/v1/auth/me & /api/v1/restaurants/registration/status
+  const login = useCallback(
+    async (statusOverride?: RegistrationStatus) => {
+      // 1. Fetch authenticated owner details from backend
+      try {
+        const me = await apiGetMe();
+        setOwner({
+          id: me.id,
+          name: me.name,
+          email: me.email,
+          phone: me.phone,
+        });
+      } catch {
+        // ignore if not yet available
+      }
+
+      // 2. Fetch real registration application status from backend
+      let realStatus: RegistrationStatus = 'NOT_STARTED';
+      let realDetails: RegistrationStatusResponse | null = null;
+      try {
+        realDetails = await apiGetRegistrationStatus();
+        realStatus = realDetails.status;
+      } catch {
+        // if no application found yet
+      }
+
+      const effectiveStatus = statusOverride ?? realStatus;
+
+      setStatusState(effectiveStatus);
+      setStatusDetails(realDetails || { status: effectiveStatus });
+
+      if (effectiveStatus === 'APPROVED') {
+        setIsAuthenticated(true);
+        setCurrentPage('dashboard');
+        addToast({
+          type: 'success',
+          title: 'Welcome back!',
+          message: 'Logged in to Narayani Partner Dashboard',
+        });
+      } else if (effectiveStatus === 'NOT_STARTED') {
+        setIsAuthenticated(false);
+        setAuthView('wizard');
+      } else {
+        // SUBMITTED, UNDER_REVIEW, or REJECTED
+        setIsAuthenticated(false);
+        setAuthView('status');
+      }
+    },
+    [addToast]
+  );
+
+  // Transition from APPROVED status card to full Dashboard
+  const enterDashboard = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('nfd_dashboard_entered', 'true');
+    }
+    setIsAuthenticated(true);
+    setCurrentPage('dashboard');
+    addToast({
+      type: 'success',
+      title: 'Welcome to Narayani Partner!',
+      message: 'Your restaurant has been verified.',
+    });
+  }, [addToast]);
+
+  // Step 3: Logout attached to POST /api/v1/auth/logout
+  const logout = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('nfd_dashboard_entered');
+      sessionStorage.removeItem('nfd_access_token');
+    }
+    setIsAuthenticated(false);
+    setOwner(null);
+    setStatusState('NOT_STARTED');
+    setStatusDetails(null);
+    setAuthView('login');
+    addToast({
+      type: 'info',
+      title: 'Logged out',
+      message: 'You have been safely signed out.',
+    });
+  }, [addToast]);
+
+  // Step 4: Submit Registration Wizard attached to POST /api/v1/restaurants/registration/submit
+  const submitRegistration = useCallback(
+    async (payload: RegistrationSubmitRequest) => {
+      const res = await apiSubmitRegistration(payload);
+
+      let realDetails: RegistrationStatusResponse | null = null;
+      try {
+        realDetails = await apiGetRegistrationStatus();
+      } catch {
+        // fallback
+      }
+
+      setStatusState('SUBMITTED');
+      setStatusDetails(
+        realDetails || {
+          status: 'SUBMITTED',
+          application_id: res.application_id,
+          restaurant_id: res.restaurant_id,
+          restaurant_name: payload.restaurant.name,
+          submitted_at: new Date().toISOString(),
+        }
+      );
+      setAuthView('status');
+      addToast({
+        type: 'success',
+        title: 'Registration Submitted',
+        message: 'Your restaurant registration was submitted for verification.',
+      });
+    },
+    [addToast]
+  );
+
+  const toggleOnline = useCallback(() => {
+    setIsOnline((prev) => {
+      const next = !prev;
+      if (next) {
+        setOfflineUntil(null);
+        setOfflineReason('');
+        addToast({ type: 'success', title: "You're online", message: 'Receiving new orders' });
+      } else {
+        addToast({ type: 'info', title: "You're offline", message: 'Not receiving new orders' });
+      }
+      return next;
+    });
+  }, [addToast]);
+
+  const goOfflineFor = useCallback(
+    (minutes: number) => {
+      setIsOnline(false);
+      if (minutes > 0) {
+        const until = new Date(Date.now() + minutes * 60000);
+        setOfflineUntil(until);
+        addToast({
+          type: 'info',
+          title: `Offline for ${minutes < 60 ? minutes + 'm' : minutes / 60 + 'h'}`,
+          message: 'Auto-resuming later',
+        });
+      } else {
+        setOfflineUntil(null);
+        addToast({ type: 'info', title: 'Offline for rest of day', message: 'Resumes tomorrow' });
+      }
+    },
+    [addToast]
+  );
+
+  const addOrder = useCallback((o: Order) => {
+    setOrders((prev) => [o, ...prev]);
+  }, []);
+
+  const updateOrderStatus = useCallback((id: string, status: Order['status']) => {
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id !== id) return o;
+        const labelMap: Record<Order['status'], string> = {
+          PLACED: 'Order Placed',
+          ACCEPTED: 'Order Accepted',
+          PREPARING: 'Preparation Started',
+          READY_FOR_PICKUP: 'Ready for Pickup',
+          PICKED_UP: 'Picked Up',
+          DELIVERED: 'Delivered',
+          COMPLETED: 'Completed',
+          REJECTED: 'Order Rejected',
+          CANCELLED: 'Order Cancelled',
+          FAILED: 'Order Failed',
+          REFUNDED: 'Order Refunded',
+        };
+        return {
+          ...o,
+          status,
+          timeline: [...o.timeline, { status, timestamp: new Date().toISOString(), label: labelMap[status] }],
+        };
+      })
+    );
+  }, []);
+
+  const updateMenuItem = useCallback((id: string, updates: Partial<MenuItem>) => {
+    setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+  }, []);
+
+  const reorderCategories = useCallback((newOrder: Category[]) => {
+    setCategories(newOrder);
+  }, []);
+
+  const addMenuItem = useCallback((item: MenuItem) => {
+    setMenuItems((prev) => [...prev, item]);
+  }, []);
+
+  // Fetch categories from backend database for the authenticated owner's restaurant
+  const loadCategories = useCallback(async () => {
+    try {
+      const apiCats = await apiGetCategories();
+      if (Array.isArray(apiCats) && apiCats.length > 0) {
+        setCategories(
+          apiCats.map((c) => ({
+            id: c.id,
+            name: c.name,
+            visible: c.is_active,
+            itemCount: menuItems.filter(
+              (item) => item.category.toLowerCase() === c.name.toLowerCase()
+            ).length,
+          }))
+        );
+      }
+    } catch {
+      // Keep existing categories if database is not reachable yet
+    }
+  }, [menuItems]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadCategories();
+    }
+  }, [isAuthenticated, loadCategories]);
+
+  const addCategory = useCallback(
+    async (name: string, visible: boolean = true): Promise<Category> => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        throw new Error('Category name cannot be empty');
+      }
+
+      // POST /menu/categories sends ONLY { "name": trimmed } - backend derives restaurant from session
+      const res = await apiCreateCategory({ name: trimmed });
+      const newCat: Category = {
+        id: res.id,
+        name: res.name,
+        visible: res.is_active,
+        itemCount: 0,
+      };
+
+      setCategories((prev) => {
+        const exists = prev.some(
+          (c) => c.id === newCat.id || c.name.toLowerCase() === newCat.name.toLowerCase()
+        );
+        if (exists) return prev;
+        return [...prev, newCat];
+      });
+
+      return newCat;
+    },
+    []
+  );
+
+  const toggleCategoryVisible = useCallback((id: string) => {
+    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, visible: !c.visible } : c)));
+  }, []);
+
+  const toggleDarkMode = useCallback(() => setDarkMode((p) => !p), []);
+  const toggleSound = useCallback(() => setSoundEnabled((p) => !p), []);
+  const clearNewOrderCount = useCallback(() => setNewOrderCount(0), []);
+  const addNotification = useCallback(
+    (n: { type: string; title: string; message: string }) => {
+      setUnreadNotificationCount((p) => p + 1);
+      addToast({ type: 'info', title: n.title, message: n.message });
+    },
+    [addToast]
+  );
+
+  // Simulate periodic new orders
+  useEffect(() => {
+    if (!isOnline) return;
+    const interval = setInterval(() => {
+      if (Math.random() > 0.5) {
+        const newOrder = generateOrder(undefined, 'PLACED');
+        addOrder(newOrder);
+        setNewOrderCount((p) => p + 1);
+        addToast({
+          type: 'success',
+          title: 'New Order!',
+          message: `${newOrder.shortId} • ${newOrder.customerName} • ₹${newOrder.total}`,
+        });
+      }
+    }, 25000);
+    return () => clearInterval(interval);
+  }, [isOnline, addOrder, addToast]);
+
+  const setPage = useCallback((p: Page) => {
+    setCurrentPage(p);
+    if (p === 'orders') setNewOrderCount(0);
+  }, []);
+
+  return (
+    <AppContext.Provider
+      value={{
+        currentPage,
+        setPage,
+        isAuthenticated,
+        authView,
+        setAuthView,
+        owner,
+        registrationStatus,
+        statusDetails,
+        setRegistrationStatus,
+        login,
+        enterDashboard,
+        logout,
+        registerOwner,
+        submitRegistration,
+        refreshToken,
+        isOnline,
+        toggleOnline,
+        goOfflineFor,
+        offlineUntil,
+        offlineReason,
+        setOfflineReason,
+        darkMode,
+        toggleDarkMode,
+        orders,
+        addOrder,
+        updateOrderStatus,
+        selectedOrderId,
+        setSelectedOrderId,
+        menuItems,
+        updateMenuItem,
+        addMenuItem,
+        categories,
+        loadCategories,
+        reorderCategories,
+        addCategory,
+        toggleCategoryVisible,
+        toasts,
+        addToast,
+        removeToast,
+        soundEnabled,
+        toggleSound,
+        newOrderCount,
+        clearNewOrderCount,
+        unreadNotificationCount,
+        setUnreadNotificationCount,
+        addNotification,
+      }}
+    >
+      {children}
+    </AppContext.Provider>
+  );
+}
