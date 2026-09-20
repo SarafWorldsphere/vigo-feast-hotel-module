@@ -7,7 +7,7 @@ from app.db.database import Base
 
 
 class RestaurantDocument(Base):
-    __tablename__ = "nfd_restaurant_documents"
+    __tablename__ = "vgf_restaurant_documents"
     __table_args__ = (
         UniqueConstraint("restaurant_id", "document_type", name="uq_restaurant_document_type"),
     )

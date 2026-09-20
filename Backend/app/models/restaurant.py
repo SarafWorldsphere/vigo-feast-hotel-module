@@ -1,13 +1,13 @@
 import uuid
 
-from sqlalchemy import Column, String, Text, Float
+from sqlalchemy import Boolean, Column, DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.database import Base
 
 
 class Restaurant(Base):
-    __tablename__ = "nfd_restaurants"
+    __tablename__ = "vgf_restaurants"
 
     id = Column(
         UUID(as_uuid=True),
@@ -86,7 +86,29 @@ class Restaurant(Base):
     )
 
     status = Column(
-        String(20),
+        String(30),
         nullable=False,
         default="OFFLINE"
     )
+
+    is_active = Column(
+        Boolean,
+        nullable=False,
+        default=True
+    )
+
+    is_deleted = Column(
+        Boolean,
+        nullable=False,
+        default=False
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )

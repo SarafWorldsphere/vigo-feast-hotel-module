@@ -20,13 +20,26 @@ const foodImages: Record<string, string> = {
 };
 
 export function FoodImage({ image, name, className = '' }: { image: string; name: string; className?: string }) {
-  const url = foodImages[image] ?? foodImages.paneer;
+  const resolveUrl = (img: string) => {
+    if (!img) return foodImages.paneer;
+    if (img.startsWith('/') || img.startsWith('http')) return img;
+    return foodImages[img] ?? foodImages.paneer;
+  };
+
+  const initialUrl = resolveUrl(image);
+
   return (
     <div className={`relative overflow-hidden bg-gray-100 dark:bg-gray-800 ${className}`}>
       <img
-        src={url}
+        src={initialUrl}
         alt={name}
         loading="lazy"
+        onError={(e) => {
+          const target = e.currentTarget;
+          if (target.src !== foodImages.paneer) {
+            target.src = foodImages.paneer;
+          }
+        }}
         className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
       />
     </div>
@@ -34,9 +47,11 @@ export function FoodImage({ image, name, className = '' }: { image: string; name
 }
 
 export function getFoodImage(image: string): string {
+  if (!image) return foodImages.paneer;
+  if (image.startsWith('/') || image.startsWith('http')) return image;
   return foodImages[image] ?? foodImages.paneer;
 }
 
 export function getMenuItemImage(item: MenuItem): string {
-  return getFoodImage(item.image);
+  return getFoodImage(item.image_url || item.image);
 }

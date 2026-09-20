@@ -54,40 +54,43 @@ def get_registration_status(
     owner: RestaurantOwner = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ):
-    application = (
-        db.query(RestaurantRegistrationApplication)
-        .join(
-            Restaurant,
-            Restaurant.id == RestaurantRegistrationApplication.restaurant_id,
-        )
-        .filter(
-            Restaurant.owner_id == owner.id
-        )
-        .order_by(
-            RestaurantRegistrationApplication.submitted_at.desc()
-        )
+    # 1. Identify owner from access token and find owner's restaurant
+    restaurant = (
+        db.query(Restaurant)
+        .filter(Restaurant.owner_id == owner.id)
         .first()
     )
 
-    if not application:
+    if not restaurant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No restaurant registration found",
         )
 
-    restaurant = (
-        db.query(Restaurant)
-        .filter(Restaurant.id == application.restaurant_id)
+    # 2. Find registration application if it exists
+    application = (
+        db.query(RestaurantRegistrationApplication)
+        .filter(RestaurantRegistrationApplication.restaurant_id == restaurant.id)
+        .order_by(RestaurantRegistrationApplication.submitted_at.desc())
         .first()
     )
 
+    # 3. Check if registration is approved or restaurant is active
+    effective_status = "SUBMITTED"
+    if application:
+        effective_status = application.status
+
+    if restaurant.status in ("ACTIVE", "APPROVED") or effective_status == "APPROVED":
+        effective_status = "APPROVED"
+
     return RegistrationStatusResponse(
-        application_id=str(application.id),
-        restaurant_id=str(application.restaurant_id),
+        application_id=str(application.id) if application else str(restaurant.id),
+        restaurant_id=str(restaurant.id),
         restaurant_name=restaurant.name,
-        status=application.status,
-        submitted_at=application.submitted_at,
-        reviewed_at=application.reviewed_at,
-        rejection_reason=application.rejection_reason,
+        status=effective_status,
+        submitted_at=application.submitted_at if application else getattr(restaurant, "created_at", None),
+        reviewed_at=application.reviewed_at if application else getattr(restaurant, "updated_at", None),
+        rejection_reason=application.rejection_reason if application else None,
     )
+
 

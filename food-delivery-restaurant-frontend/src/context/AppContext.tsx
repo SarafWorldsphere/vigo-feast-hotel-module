@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Order, generateOrder, mockMenuItems, MenuItem, mockCategories, Category } from '@/data/mockData';
+import { Order, generateOrder, MenuItem, Category, ItemAvailability } from '@/data/mockData';
 import {
   RegistrationStatus,
   RegistrationStatusResponse,
@@ -16,6 +16,13 @@ import {
   apiGetRegistrationStatus,
   apiCreateCategory,
   apiGetCategories,
+  CategoryResponse,
+  MenuItemCreateRequest,
+  apiCreateMenuItem,
+  apiGetMenuItems,
+  apiUpdateMenuItemAvailability,
+  MenuItemAvailability,
+  MenuItemResponse,
 } from '@/services/api';
 
 export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
@@ -39,6 +46,7 @@ interface AppState {
   currentPage: Page;
   setPage: (p: Page) => void;
   isAuthenticated: boolean;
+  isAuthLoading: boolean;
   authView: AuthView;
   setAuthView: (v: AuthView) => void;
   owner: OwnerSession | null;
@@ -66,7 +74,10 @@ interface AppState {
   setSelectedOrderId: (id: string | null) => void;
   menuItems: MenuItem[];
   updateMenuItem: (id: string, updates: Partial<MenuItem>) => void;
+  updateMenuItemAvailability: (id: string, availability: ItemAvailability) => Promise<MenuItem>;
   addMenuItem: (item: MenuItem) => void;
+  createMenuItem: (payload: MenuItemCreateRequest) => Promise<MenuItem>;
+  loadMenuItems: () => Promise<void>;
   categories: Category[];
   loadCategories: () => Promise<void>;
   reorderCategories: (newOrder: Category[]) => void;
@@ -95,6 +106,7 @@ export function useApp() {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authView, setAuthView] = useState<AuthView>('login');
   const [owner, setOwner] = useState<OwnerSession | null>(null);
   const [registrationStatus, setStatusState] = useState<RegistrationStatus>('NOT_STARTED');
@@ -109,12 +121,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return initial.sort((a, b) => new Date(b.placedAt).getTime() - new Date(a.placedAt).getTime());
   });
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(mockMenuItems);
-  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [newOrderCount, setNewOrderCount] = useState(0);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(4);
+
+  const addToast = useCallback((t: Omit<Toast, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts((prev) => [...prev, { ...t, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((x) => x.id !== id));
+    }, 4500);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }, []);
 
   // Dark mode
   useEffect(() => {
@@ -142,9 +166,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Restore authenticated session & application status on mount
   useEffect(() => {
     let isMounted = true;
-    apiGetMe()
-      .then(async (me) => {
-        if (!isMounted) return;
+
+    async function checkSession() {
+      try {
+        let me;
+        try {
+          me = await apiGetMe();
+        } catch {
+          // If access token is expired, attempt refresh via 30-day cookie
+          const refresh = await apiRefreshToken().catch(() => null);
+          if (refresh?.access_token) {
+            me = await apiGetMe().catch(() => null);
+          }
+        }
+
+        if (!isMounted || !me) {
+          if (isMounted) {
+            setIsAuthenticated(false);
+            setAuthView('login');
+          }
+          return;
+        }
+
         setOwner({
           id: me.id,
           name: me.name,
@@ -175,27 +218,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
             setAuthView('wizard');
           }
         }
-      })
-      .catch(() => {
-        // Not logged in or expired token, stay on login view
+      } catch {
+        if (isMounted) {
+          setIsAuthenticated(false);
+          setAuthView('login');
+        }
+      } finally {
+        if (isMounted) {
+          setIsAuthLoading(false);
+        }
+      }
+    }
+
+    checkSession();
+
+    const handleSessionExpired = () => {
+      setIsAuthenticated(false);
+      setOwner(null);
+      setStatusState('NOT_STARTED');
+      setStatusDetails(null);
+      setAuthView('login');
+      addToast({
+        type: 'info',
+        title: 'Session Expired',
+        message: 'Your session has expired. Please sign in again.',
       });
+    };
+
+    window.addEventListener('auth:session_expired', handleSessionExpired);
 
     return () => {
       isMounted = false;
+      window.removeEventListener('auth:session_expired', handleSessionExpired);
     };
-  }, []);
-
-  const addToast = useCallback((t: Omit<Toast, 'id'>) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setToasts((prev) => [...prev, { ...t, id }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((x) => x.id !== id));
-    }, 4500);
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((x) => x.id !== id));
-  }, []);
+  }, [addToast]);
 
   // Silent token refresh using backend /api/v1/auth/refresh
   const refreshToken = useCallback(async () => {
@@ -435,34 +491,117 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
   }, []);
 
+  const updateMenuItemAvailability = useCallback(async (id: string, availability: ItemAvailability): Promise<MenuItem> => {
+    const response = await apiUpdateMenuItemAvailability(id, availability as MenuItemAvailability);
+    let updatedItem: MenuItem | undefined;
+    setMenuItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      updatedItem = { ...item, availability: (response.availability_status as ItemAvailability) || availability };
+      return updatedItem;
+    }));
+    if (!updatedItem) throw new Error('Menu item not found');
+    return updatedItem;
+  }, []);
+
   const reorderCategories = useCallback((newOrder: Category[]) => {
     setCategories(newOrder);
   }, []);
 
   const addMenuItem = useCallback((item: MenuItem) => {
-    setMenuItems((prev) => [...prev, item]);
+    setMenuItems((prev) => [item, ...prev]);
   }, []);
 
-  // Fetch categories from backend database for the authenticated owner's restaurant
+  const loadMenuItems = useCallback(async () => {
+    try {
+      const apiItems = await apiGetMenuItems();
+      if (Array.isArray(apiItems)) {
+        const catMap = new Map(categories.map((c) => [c.id, c.name]));
+        const mappedDb: MenuItem[] = apiItems.map((it) => ({
+          id: it.id,
+          name: it.name,
+          description: it.description || '',
+          price: Number(it.base_price),
+          category: catMap.get(it.category_id) || 'Uncategorized',
+          prepTime: it.preparation_time_minutes,
+          availability: (it.availability_status as ItemAvailability) || 'AVAILABLE',
+          image: it.image_url || 'placeholder',
+          image_url: it.image_url || undefined,
+          rating: 5.0,
+          totalOrders: 0,
+          foodType: (it.food_type as any) || 'VEG',
+        }));
+        setMenuItems(mappedDb);
+      }
+    } catch {
+      // Keep existing menu items if backend is not reachable yet
+    }
+  }, [categories]);
+
+  // Fetch categories and items from backend database for the authenticated owner's restaurant
   const loadCategories = useCallback(async () => {
     try {
-      const apiCats = await apiGetCategories();
-      if (Array.isArray(apiCats) && apiCats.length > 0) {
-        setCategories(
-          apiCats.map((c) => ({
-            id: c.id,
-            name: c.name,
-            visible: c.is_active,
-            itemCount: menuItems.filter(
-              (item) => item.category.toLowerCase() === c.name.toLowerCase()
-            ).length,
-          }))
-        );
-      }
+      const [apiCats, apiItems] = await Promise.all([
+        apiGetCategories().catch(() => [] as CategoryResponse[]),
+        apiGetMenuItems().catch(() => [] as MenuItemResponse[]),
+      ]);
+
+      const catMap = new Map((apiCats || []).map((c) => [c.id, c.name]));
+      const mappedDb: MenuItem[] = (apiItems || []).map((it) => ({
+        id: it.id,
+        name: it.name,
+        description: it.description || '',
+        price: Number(it.base_price),
+        category: catMap.get(it.category_id) || 'Uncategorized',
+        prepTime: it.preparation_time_minutes,
+        availability: (it.availability_status as ItemAvailability) || 'AVAILABLE',
+        image: it.image_url || 'placeholder',
+        image_url: it.image_url || undefined,
+        rating: 5.0,
+        totalOrders: 0,
+        foodType: (it.food_type as any) || 'VEG',
+      }));
+
+      setCategories(
+        (apiCats || []).map((c) => ({
+          id: c.id,
+          name: c.name,
+          visible: c.is_active,
+          itemCount: mappedDb.filter(
+            (item) => item.category.toLowerCase() === c.name.toLowerCase()
+          ).length,
+        }))
+      );
+
+      setMenuItems(mappedDb);
     } catch {
       // Keep existing categories if database is not reachable yet
     }
-  }, [menuItems]);
+  }, []);
+
+  const createMenuItem = useCallback(
+    async (payload: MenuItemCreateRequest): Promise<MenuItem> => {
+      const res = await apiCreateMenuItem(payload);
+      const matchedCategory = categories.find((c) => c.id === res.category_id);
+      const newItem: MenuItem = {
+        id: res.id,
+        name: res.name,
+        description: res.description || '',
+        price: Number(res.base_price),
+        category: matchedCategory?.name || payload.category_name || 'Main Course',
+        prepTime: res.preparation_time_minutes,
+        availability: (res.availability_status as ItemAvailability) || 'AVAILABLE',
+        image: res.image_url || 'placeholder',
+        image_url: res.image_url || undefined,
+        rating: 5.0,
+        totalOrders: 0,
+        foodType: (res.food_type as any) || 'VEG',
+      };
+
+      setMenuItems((prev) => [newItem, ...prev]);
+      return newItem;
+    },
+    [categories]
+  );
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -543,6 +682,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         currentPage,
         setPage,
         isAuthenticated,
+        isAuthLoading,
         authView,
         setAuthView,
         owner,
@@ -570,7 +710,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedOrderId,
         menuItems,
         updateMenuItem,
+        updateMenuItemAvailability,
         addMenuItem,
+        createMenuItem,
+        loadMenuItems,
         categories,
         loadCategories,
         reorderCategories,

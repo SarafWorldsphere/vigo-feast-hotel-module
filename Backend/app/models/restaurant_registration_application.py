@@ -7,7 +7,7 @@ from app.db.database import Base
 
 
 class RestaurantRegistrationApplication(Base):
-    __tablename__ = "nfd_restaurant_registration_applications"
+    __tablename__ = "vgf_restaurant_registration_applications"
 
     id = Column(
         UUID(as_uuid=True),

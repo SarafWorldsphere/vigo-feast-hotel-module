@@ -28,6 +28,7 @@ class RegistrationStatusResponse(BaseModel):
     restaurant_id: str
     restaurant_name: str
     status: str
-    submitted_at: datetime | None
-    reviewed_at: datetime | None
-    rejection_reason: str | None
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    rejection_reason: str | None = None
+

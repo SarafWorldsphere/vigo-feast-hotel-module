@@ -125,7 +125,7 @@ def get_current_owner(
     db: Session = Depends(get_db),
 ):
     token = access_token
-    if not token and authorization:
+    if not token and authorization and isinstance(authorization, str):
         if authorization.startswith("Bearer "):
             token = authorization[7:].strip()
         else:

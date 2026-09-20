@@ -1,30 +1,24 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.database import Base
 
 
 class MenuCategory(Base):
-    __tablename__ = "nfd_menu_categories"
-
-    category_id = Column(
-        BigInteger,
-        primary_key=True,
-        autoincrement=True,
-    )
+    __tablename__ = "vgf_menu_categories"
 
     id = Column(
         UUID(as_uuid=True),
+        primary_key=True,
         default=uuid.uuid4,
-        nullable=False,
     )
 
     restaurant_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("nfd_restaurants.id", ondelete="CASCADE"),
+        ForeignKey("vgf_restaurants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -34,10 +28,6 @@ class MenuCategory(Base):
         nullable=False,
     )
 
-    category_name = Column(
-        String(100),
-        nullable=True,
-    )
 
     display_order = Column(
         Integer,

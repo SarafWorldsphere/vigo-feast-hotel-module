@@ -7,7 +7,7 @@ from app.db.database import Base
 
 
 class RestaurantOwner(Base):
-    __tablename__ = "nfd_restaurant_owners"
+    __tablename__ = "vgf_restaurant_owners"
 
     id = Column(
         UUID(as_uuid=True),
@@ -51,7 +51,7 @@ class RestaurantOwner(Base):
         nullable=True
     )
 class RestaurantOwnerSession(Base):
-    __tablename__ = "nfd_restaurant_owner_sessions"
+    __tablename__ = "vgf_restaurant_owner_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 

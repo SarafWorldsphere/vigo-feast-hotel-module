@@ -5,7 +5,7 @@ from app.db.database import Base
 
 
 class CuisineType(Base):
-    __tablename__ = "nfd_cuisine_types"
+    __tablename__ = "vgf_cuisine_types"
 
     id = Column(
         UUID(as_uuid=True),
@@ -20,7 +20,7 @@ class CuisineType(Base):
 
 
 class RestaurantCuisine(Base):
-    __tablename__ = "nfd_restaurant_cuisines"
+    __tablename__ = "vgf_restaurant_cuisines"
 
     restaurant_id = Column(
         UUID(as_uuid=True),

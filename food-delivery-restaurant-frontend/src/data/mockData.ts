@@ -62,6 +62,7 @@ export interface MenuItem {
   prepTime: number;
   availability: ItemAvailability;
   image: string;
+  image_url?: string;
   rating: number;
   totalOrders: number;
   foodType?: 'VEG' | 'NON_VEG' | 'EGG';

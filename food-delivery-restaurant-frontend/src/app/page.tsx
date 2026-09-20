@@ -55,7 +55,7 @@ function ComingSoon({ page }: { page: string }) {
 }
 
 export default function HomePage() {
-  const { isAuthenticated, authView, registrationStatus, currentPage } = useApp();
+  const { isAuthenticated, isAuthLoading, authView, registrationStatus, currentPage } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isTablet, setIsTablet] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -71,10 +71,11 @@ export default function HomePage() {
     return () => window.removeEventListener('resize', checkSize);
   }, []);
 
-  if (!mounted) {
+  if (!mounted || isAuthLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col items-center justify-center gap-3">
+        <div className="w-10 h-10 border-3 border-brand-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs font-medium text-gray-400 dark:text-gray-500">Checking partner session...</p>
       </div>
     );
   }

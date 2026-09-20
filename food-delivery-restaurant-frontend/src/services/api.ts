@@ -123,11 +123,14 @@ export interface RegistrationStatusResponse {
   message?: string;
 }
 
+let isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
+
 /**
- * Standard fetch helper with credentials included for HttpOnly cookie authentication
- * and Authorization header support
+ * Standard fetch helper with credentials included for HttpOnly cookie authentication,
+ * Authorization header support, and automatic 401 token refresh retry.
  */
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
   const token = getAuthToken();
   const headers: HeadersInit = {
@@ -141,6 +144,68 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers,
     credentials: 'include', // Includes access_token & refresh_token HttpOnly cookies
   });
+
+  // If 401 Unauthorized and not an auth endpoint or already retrying, attempt silent refresh
+  if (
+    response.status === 401 &&
+    !isRetry &&
+    !endpoint.includes('/auth/login') &&
+    !endpoint.includes('/auth/refresh') &&
+    !endpoint.includes('/auth/register-owner')
+  ) {
+    try {
+      if (!isRefreshing) {
+        isRefreshing = true;
+        refreshPromise = (async () => {
+          try {
+            const refreshRes = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+            });
+            if (refreshRes.ok) {
+              const data = await refreshRes.json();
+              if (data?.access_token) {
+                setAuthToken(data.access_token);
+                return data.access_token;
+              }
+            }
+            return null;
+          } catch {
+            return null;
+          } finally {
+            isRefreshing = false;
+          }
+        })();
+      }
+
+      const newToken = await refreshPromise;
+      if (newToken) {
+        return request<T>(endpoint, options, true);
+      } else {
+        // Refresh failed (refresh token expired or invalid)
+        setAuthToken(null);
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('nfd_access_token');
+          sessionStorage.removeItem('nfd_dashboard_entered');
+          window.dispatchEvent(new CustomEvent('auth:session_expired'));
+        }
+      }
+    } catch {
+      // ignore and let original error throw
+    }
+  } else if (
+    response.status === 401 &&
+    (isRetry || endpoint.includes('/auth/refresh'))
+  ) {
+    // If it's still 401 after retry or refresh endpoint returned 401
+    setAuthToken(null);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('nfd_access_token');
+      sessionStorage.removeItem('nfd_dashboard_entered');
+      window.dispatchEvent(new CustomEvent('auth:session_expired'));
+    }
+  }
 
   if (!response.ok) {
     let errorMsg = `Request failed (${response.status})`;
@@ -277,24 +342,82 @@ export interface CategoryResponse {
 }
 
 /**
- * POST /menu/categories
+ * POST /api/v1/menu/categories
  * Sends ONLY { "name": "..." } from the frontend.
  * Backend derives the owner's restaurant from the session, checks duplicates, assigns display_order, and inserts into menu_categories.
  */
 export async function apiCreateCategory(payload: CategoryCreateRequest): Promise<CategoryResponse> {
-  return request<CategoryResponse>('/menu/categories', {
+  return request<CategoryResponse>('/api/v1/menu/categories', {
     method: 'POST',
     body: JSON.stringify({ name: payload.name }),
   });
 }
 
 /**
- * GET /menu/categories
+ * GET /api/v1/menu/categories
  * Retrieves all categories for the authenticated owner's restaurant
  */
 export async function apiGetCategories(): Promise<CategoryResponse[]> {
-  return request<CategoryResponse[]>('/menu/categories', {
+  return request<CategoryResponse[]>('/api/v1/menu/categories', {
     method: 'GET',
   });
 }
 
+export interface MenuItemCreateRequest {
+  category_id?: string;
+  category_name?: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  base_price: number;
+  food_type: 'VEG' | 'NON_VEG' | 'EGG';
+  preparation_time_minutes: number;
+}
+
+export interface MenuItemResponse {
+  id: string;
+  category_id: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  base_price: number;
+  food_type: string;
+  preparation_time_minutes: number;
+  availability_status: string;
+  display_order: number;
+  is_active: boolean;
+}
+
+export type MenuItemAvailability = 'AVAILABLE' | 'TEMP_UNAVAILABLE' | 'OUT_OF_STOCK';
+
+/**
+ * POST /api/v1/menu/items
+ * Creates a new menu item in nfd_menu_items table in the database
+ */
+export async function apiCreateMenuItem(payload: MenuItemCreateRequest): Promise<MenuItemResponse> {
+  return request<MenuItemResponse>('/api/v1/menu/items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * GET /api/v1/menu/items
+ * Retrieves menu items for the authenticated owner's restaurant
+ */
+export async function apiGetMenuItems(): Promise<MenuItemResponse[]> {
+  return request<MenuItemResponse[]>('/api/v1/menu/items', {
+    method: 'GET',
+  });
+}
+
+/** PATCH /api/v1/menu/items/{item_id}/availability */
+export async function apiUpdateMenuItemAvailability(
+  itemId: string,
+  availability_status: MenuItemAvailability,
+): Promise<MenuItemResponse> {
+  return request<MenuItemResponse>(`/api/v1/menu/items/${encodeURIComponent(itemId)}/availability`, {
+    method: 'PATCH',
+    body: JSON.stringify({ availability_status }),
+  });
+}
