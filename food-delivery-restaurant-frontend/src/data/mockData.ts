@@ -84,12 +84,7 @@ const customerNames = [
   'Sanjay Verma', 'Nisha Agarwal', 'Rohit Desai', 'Pooja Iyer', 'Aditya Rao',
 ];
 
-const dishNames = [
-  'Paneer Butter Masala', 'Chicken Biryani', 'Margherita Pizza', 'Veg Burger',
-  'Masala Dosa', 'Chicken Tikka', 'Caesar Salad', 'Pasta Alfredo',
-  'Garlic Naan', 'Spring Rolls', 'Fish Curry', 'Veg Fried Rice',
-  'Chocolate Brownie', 'Gulab Jamun', 'Cold Coffee', 'Fresh Lime Soda',
-];
+
 
 const addresses = [
   '221B MG Road, Indiranagar, Bangalore 560038',
@@ -112,100 +107,6 @@ function randInt(min: number, max: number): number {
 function timeAgo(minutes: number): string {
   const d = new Date(Date.now() - minutes * 60000);
   return d.toISOString();
-}
-
-const orderStatuses: OrderStatus[] = [
-  'PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'COMPLETED', 'REJECTED', 'CANCELLED',
-];
-
-export function generateOrder(id?: string, status?: OrderStatus): Order {
-  const itemCount = randInt(1, 4);
-  const items: OrderItem[] = [];
-  for (let i = 0; i < itemCount; i++) {
-    const dish = rand(dishNames);
-    const hasVariant = Math.random() > 0.6;
-    const addOnCount = randInt(0, 2);
-    const addOns = addOnCount > 0
-      ? ['Extra Cheese', 'Extra Spicy', 'Schezwan Sauce', 'Mayo Dip'].slice(0, addOnCount)
-      : undefined;
-    items.push({
-      id: `item-${i}`,
-      name: dish,
-      quantity: randInt(1, 3),
-      price: randInt(80, 350),
-      variant: hasVariant ? rand(['Half', 'Full', 'Regular', 'Large']) : undefined,
-      addOns,
-      notes: Math.random() > 0.7 ? 'Less spicy, no onions' : undefined,
-    });
-  }
-
-  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  const taxes = Math.round(subtotal * 0.05);
-  const deliveryFee = randInt(20, 50);
-  const packagingFee = randInt(10, 30);
-  const discount = Math.random() > 0.6 ? randInt(20, 80) : 0;
-  const total = subtotal + taxes + deliveryFee + packagingFee - discount;
-  const placedMinutesAgo = randInt(1, 120);
-  const finalStatus = status ?? rand(orderStatuses);
-  const shortId = `ORD${randInt(10000, 99999)}`;
-
-  const timeline: Order['timeline'] = [
-    { status: 'PLACED', timestamp: timeAgo(placedMinutesAgo), label: 'Order Placed' },
-  ];
-  if (['ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'DELIVERED', 'COMPLETED'].includes(finalStatus)) {
-    timeline.push({ status: 'ACCEPTED', timestamp: timeAgo(placedMinutesAgo - 1), label: 'Order Accepted' });
-  }
-  if (['PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'DELIVERED', 'COMPLETED'].includes(finalStatus)) {
-    timeline.push({ status: 'PREPARING', timestamp: timeAgo(placedMinutesAgo - 3), label: 'Preparation Started' });
-  }
-  if (['READY_FOR_PICKUP', 'PICKED_UP', 'DELIVERED', 'COMPLETED'].includes(finalStatus)) {
-    timeline.push({ status: 'READY_FOR_PICKUP', timestamp: timeAgo(placedMinutesAgo - 8), label: 'Ready for Pickup' });
-  }
-  if (['PICKED_UP', 'DELIVERED', 'COMPLETED'].includes(finalStatus)) {
-    timeline.push({ status: 'PICKED_UP', timestamp: timeAgo(placedMinutesAgo - 12), label: 'Picked Up' });
-  }
-  if (['DELIVERED', 'COMPLETED'].includes(finalStatus)) {
-    timeline.push({ status: 'DELIVERED', timestamp: timeAgo(placedMinutesAgo - 20), label: 'Delivered' });
-  }
-  if (finalStatus === 'COMPLETED') {
-    timeline.push({ status: 'COMPLETED', timestamp: timeAgo(placedMinutesAgo - 22), label: 'Completed' });
-  }
-  if (finalStatus === 'REJECTED') {
-    timeline.push({ status: 'REJECTED', timestamp: timeAgo(placedMinutesAgo - 2), label: 'Order Rejected' });
-  }
-  if (finalStatus === 'CANCELLED') {
-    timeline.push({ status: 'CANCELLED', timestamp: timeAgo(placedMinutesAgo - 2), label: 'Order Cancelled' });
-  }
-
-  return {
-    id: id ?? `order-${Math.random().toString(36).slice(2)}`,
-    shortId,
-    customerName: rand(customerNames),
-    customerPhone: `+91 ${randInt(70000, 99999)} ${randInt(10000, 99999)}`,
-    status: finalStatus,
-    items,
-    subtotal,
-    taxes,
-    deliveryFee,
-    packagingFee,
-    discount,
-    total,
-    paymentStatus: Math.random() > 0.4 ? 'PAID' : Math.random() > 0.5 ? 'COD' : 'PENDING',
-    paymentMethod: rand(['UPI', 'Credit Card', 'Wallet', 'Cash on Delivery']),
-    placedAt: timeAgo(placedMinutesAgo),
-    prepTime: randInt(15, 45),
-    deliveryAddress: rand(addresses),
-    rating: finalStatus === 'COMPLETED' ? randInt(3, 5) : undefined,
-    otp: ['READY_FOR_PICKUP', 'PICKED_UP'].includes(finalStatus) ? String(randInt(1000, 9999)) : undefined,
-    deliveryPartner: ['PICKED_UP', 'DELIVERED', 'COMPLETED'].includes(finalStatus)
-      ? { name: rand(['Ramesh K', 'Suresh P', 'Mahesh B', 'Ganesh S', 'Lokesh M']), phone: `+91 ${randInt(70000, 99999)} ${randInt(10000, 99999)}`, vehicle: rand(['KA01 AB 1234', 'KA02 CD 5678', 'KA03 EF 9012']) }
-      : undefined,
-    timeline,
-  };
-}
-
-export function generateOrders(count: number): Order[] {
-  return Array.from({ length: count }, () => generateOrder());
 }
 
 export const mockMenuItems: MenuItem[] = [

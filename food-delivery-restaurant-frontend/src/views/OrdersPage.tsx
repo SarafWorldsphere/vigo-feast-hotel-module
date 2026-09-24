@@ -5,6 +5,7 @@ import { StatusChip, getStatusConfig } from '@/components/ui/StatusChip';
 import {
   X, Clock, MapPin, Phone, CreditCard, Bike, CheckCircle2, XCircle,
   ChefHat, PackageCheck, QrCode, Star, IndianRupee, Timer, ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
 
 const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
@@ -19,8 +20,19 @@ const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
 ];
 
 export function OrdersPage() {
-  const { orders, selectedOrderId, setSelectedOrderId, updateOrderStatus, addToast } = useApp();
+  const { orders, loadOrders, selectedOrderId, setSelectedOrderId, updateOrderStatus, addToast } = useApp();
   const [activeTab, setActiveTab] = useState<OrderTab>('NEW');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadOrders();
+    setTimeout(() => setIsRefreshing(false), 400);
+  };
 
   const filteredOrders = useMemo(() => {
     const tab = tabConfig.find(t => t.id === activeTab)!;
@@ -37,7 +49,7 @@ export function OrdersPage() {
 
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null;
 
-  const handleAction = (order: Order, action: 'accept' | 'reject' | 'prepare' | 'ready' | 'pickup') => {
+  const handleAction = async (order: Order, action: 'accept' | 'reject' | 'prepare' | 'ready' | 'pickup') => {
     const actionMap = {
       accept: { status: 'ACCEPTED' as OrderStatus, label: 'Order accepted', type: 'success' as const },
       reject: { status: 'REJECTED' as OrderStatus, label: 'Order rejected', type: 'error' as const },
@@ -46,15 +58,20 @@ export function OrdersPage() {
       pickup: { status: 'PICKED_UP' as OrderStatus, label: 'Pickup verified', type: 'success' as const },
     };
     const cfg = actionMap[action];
-    updateOrderStatus(order.id, cfg.status);
-    addToast({ type: cfg.type, title: cfg.label, message: order.shortId });
+    try {
+      await updateOrderStatus(order.id, cfg.status);
+      addToast({ type: cfg.type, title: cfg.label, message: order.shortId });
+    } catch {
+      addToast({ type: 'error', title: 'Action failed', message: `Could not ${action} order ${order.shortId}` });
+    }
   };
 
   return (
     <div className="animate-fade-in">
       {/* Tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-3 -mx-1 px-1 mb-4 scrollbar-thin">
-        {tabConfig.map(tab => (
+      <div className="flex items-center justify-between gap-2 pb-3 mb-4">
+        <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 scrollbar-thin">
+          {tabConfig.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -75,7 +92,15 @@ export function OrdersPage() {
               </span>
             )}
           </button>
-        ))}
+          ))}
+        </div>
+        <button
+          onClick={handleRefresh}
+          className="btn-ghost p-2 rounded-xl text-gray-500 hover:text-gray-900 dark:hover:text-white shrink-0 transition-colors"
+          title="Refresh orders from server"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-brand-500' : ''}`} />
+        </button>
       </div>
 
       {/* Orders grid */}

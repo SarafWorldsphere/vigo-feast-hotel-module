@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Order, generateOrder, MenuItem, Category, ItemAvailability } from '@/data/mockData';
+import { Order, MenuItem, Category, ItemAvailability } from '@/data/mockData';
 import {
   RegistrationStatus,
   RegistrationStatusResponse,
@@ -23,6 +23,14 @@ import {
   apiUpdateMenuItemAvailability,
   MenuItemAvailability,
   MenuItemResponse,
+  getAuthToken,
+  apiGetOrder,
+  apiGetOrders,
+  apiAcceptOrder,
+  apiRejectOrder,
+  apiPreparingOrder,
+  apiReadyOrder,
+  mapBackendOrderToFrontend,
 } from '@/services/api';
 
 export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
@@ -68,8 +76,9 @@ interface AppState {
   darkMode: boolean;
   toggleDarkMode: () => void;
   orders: Order[];
+  loadOrders: () => Promise<void>;
   addOrder: (o: Order) => void;
-  updateOrderStatus: (id: string, status: Order['status']) => void;
+  updateOrderStatus: (id: string, status: Order['status']) => Promise<void>;
   selectedOrderId: string | null;
   setSelectedOrderId: (id: string | null) => void;
   menuItems: MenuItem[];
@@ -116,10 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [offlineUntil, setOfflineUntil] = useState<Date | null>(null);
   const [offlineReason, setOfflineReason] = useState('');
   const [darkMode, setDarkMode] = useState(false);
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const initial = [...Array.from({ length: 30 }, () => generateOrder())];
-    return initial.sort((a, b) => new Date(b.placedAt).getTime() - new Date(a.placedAt).getTime());
-  });
+  const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -252,6 +258,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('auth:session_expired', handleSessionExpired);
     };
   }, [addToast]);
+
+  // Real-time WebSocket connection for live orders
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const token = getAuthToken();
+    const wsUrl = `ws://localhost:8000/api/v1/ws/orders${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    let socket: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+
+    function connectWs() {
+      try {
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          console.log("CONNECTED");
+        };
+
+        socket.onmessage = async (event) => {
+          console.log("MESSAGE:", event.data);
+          try {
+            const data = JSON.parse(event.data);
+            if (data?.event === "NEW_ORDER") {
+              const backendOrder = await apiGetOrder(data.order_id);
+              const mappedOrder = mapBackendOrderToFrontend(backendOrder);
+              setOrders((previousOrders) => [
+                mappedOrder,
+                ...previousOrders.filter((o) => o.id !== mappedOrder.id),
+              ]);
+              addToast({
+                type: "success",
+                title: "🔔 New Order Received!",
+                message: `Order ${mappedOrder.shortId} has been placed.`,
+              });
+              setNewOrderCount((prev) => prev + 1);
+            }
+          } catch (err) {
+            console.error("Error processing websocket order:", err);
+          }
+        };
+
+        socket.onclose = (event) => {
+          console.log("CLOSED:", event.code);
+          if (event.code !== 1000 && event.code !== 1008) {
+            reconnectTimeout = setTimeout(connectWs, 3000);
+          }
+        };
+
+        socket.onerror = (err) => {
+          console.error("WebSocket error:", err);
+        };
+      } catch (err) {
+        console.error("Failed to establish WebSocket:", err);
+      }
+    }
+
+    connectWs();
+
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (socket) {
+        socket.close(1000);
+      }
+    };
+  }, [isAuthenticated, addToast]);
 
   // Silent token refresh using backend /api/v1/auth/refresh
   const refreshToken = useCallback(async () => {
@@ -461,7 +532,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setOrders((prev) => [o, ...prev]);
   }, []);
 
-  const updateOrderStatus = useCallback((id: string, status: Order['status']) => {
+  const updateOrderStatus = useCallback(async (id: string, status: Order['status']) => {
+    // Map frontend action to backend API call
+    const actionApiMap: Partial<Record<Order['status'], (orderId: string | number) => Promise<any>>> = {
+      ACCEPTED: apiAcceptOrder,
+      REJECTED: apiRejectOrder,
+      PREPARING: apiPreparingOrder,
+      READY_FOR_PICKUP: apiReadyOrder,
+    };
+
+    const apiFn = actionApiMap[status];
+    if (apiFn) {
+      try {
+        const backendOrder = await apiFn(id);
+        const mapped = mapBackendOrderToFrontend(backendOrder);
+        setOrders((prev) =>
+          prev.map((o) => (o.id === id ? mapped : o))
+        );
+        return;
+      } catch (err) {
+        console.error(`Failed to update order ${id} to ${status}:`, err);
+        throw err;
+      }
+    }
+
+    // Fallback for statuses without a backend API yet (local-only update)
     setOrders((prev) =>
       prev.map((o) => {
         if (o.id !== id) return o;
@@ -603,11 +698,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [categories]
   );
 
+  const loadOrders = useCallback(async () => {
+    try {
+      const res = await apiGetOrders();
+      if (res && Array.isArray(res.orders)) {
+        const mappedDb = res.orders.map(mapBackendOrderToFrontend);
+        setOrders(mappedDb);
+        const newCount = mappedDb.filter((o) => o.status === 'PLACED').length;
+        setNewOrderCount(newCount);
+      }
+    } catch (err) {
+      console.error("Failed to load orders:", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (isAuthenticated) {
       loadCategories();
+      loadOrders();
     }
-  }, [isAuthenticated, loadCategories]);
+  }, [isAuthenticated, loadCategories, loadOrders]);
 
   const addCategory = useCallback(
     async (name: string, visible: boolean = true): Promise<Category> => {
@@ -653,24 +763,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [addToast]
   );
 
-  // Simulate periodic new orders
-  useEffect(() => {
-    if (!isOnline) return;
-    const interval = setInterval(() => {
-      if (Math.random() > 0.5) {
-        const newOrder = generateOrder(undefined, 'PLACED');
-        addOrder(newOrder);
-        setNewOrderCount((p) => p + 1);
-        addToast({
-          type: 'success',
-          title: 'New Order!',
-          message: `${newOrder.shortId} • ${newOrder.customerName} • ₹${newOrder.total}`,
-        });
-      }
-    }, 25000);
-    return () => clearInterval(interval);
-  }, [isOnline, addOrder, addToast]);
-
   const setPage = useCallback((p: Page) => {
     setCurrentPage(p);
     if (p === 'orders') setNewOrderCount(0);
@@ -704,6 +796,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         darkMode,
         toggleDarkMode,
         orders,
+        loadOrders,
         addOrder,
         updateOrderStatus,
         selectedOrderId,

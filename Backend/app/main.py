@@ -4,11 +4,34 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.cuisine import router as cuisine_router
 from app.api.v1.routes.menu import router as menu_router
+from app.api.v1.routes.order import router as order_router
 from app.api.v1.routes.registration import router as registration_router
+from app.api.v1.routes.websocket import router as websocket_router
+import asyncio
+from contextlib import asynccontextmanager
 
+from app.services.order_listener import OrderListener
+from app.services.websocket_manager import websocket_manager
+
+order_listener = OrderListener(websocket_manager)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    order_listener.loop = asyncio.get_running_loop()
+
+    listener_task = asyncio.create_task(
+        asyncio.to_thread(order_listener.listen)
+    )
+
+    yield
+
+    order_listener.stop()
+    await listener_task
 app = FastAPI(
     title="Food Delivery Platform API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -47,8 +70,15 @@ app.include_router(
     prefix="/api/v1",
 )
 
+app.include_router(
+    order_router,
+    prefix="/api/v1",
+)
 
-
+app.include_router(
+    websocket_router,
+    prefix="/api/v1",
+)
 
 
 

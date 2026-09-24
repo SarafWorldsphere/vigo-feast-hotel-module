@@ -1,5 +1,7 @@
 // Real API client connecting to FastAPI backend
 
+import type { Order, OrderStatus } from '@/data/mockData';
+
 export const API_BASE_URL =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) ||
   (typeof window !== 'undefined' ? '' : 'http://127.0.0.1:8000');
@@ -421,3 +423,148 @@ export async function apiUpdateMenuItemAvailability(
     body: JSON.stringify({ availability_status }),
   });
 }
+
+export interface BackendOrderItem {
+  order_item_id: number;
+  menu_item_id: string;
+  name?: string | null;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface BackendOrder {
+  order_id: number;
+  customer_id: number;
+  restaurant_id?: string | null;
+  rider_id?: number | null;
+  order_status: string;
+  subtotal: number;
+  gst_amount: number;
+  delivery_charge: number;
+  discount_amount: number;
+  total_amount: number;
+  cancellation_status?: string | null;
+  delivery_eta?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  items?: BackendOrderItem[];
+}
+
+export interface BackendOrderListResponse {
+  orders: BackendOrder[];
+  total: number;
+}
+
+export function mapBackendOrderToFrontend(bo: BackendOrder): Order {
+  const rawStatus = (bo.order_status || 'PLACED').toUpperCase();
+  let status: OrderStatus = 'PLACED';
+  if (rawStatus === 'ORDERED' || rawStatus === 'PLACED') {
+    status = 'PLACED';
+  } else if (rawStatus === 'ACCEPTED') {
+    status = 'ACCEPTED';
+  } else if (rawStatus === 'PREPARING') {
+    status = 'PREPARING';
+  } else if (rawStatus === 'READY_FOR_PICKUP' || rawStatus === 'READY') {
+    status = 'READY_FOR_PICKUP';
+  } else if (rawStatus === 'PICKED_UP') {
+    status = 'PICKED_UP';
+  } else if (rawStatus === 'DELIVERED') {
+    status = 'DELIVERED';
+  } else if (rawStatus === 'COMPLETED') {
+    status = 'COMPLETED';
+  } else if (rawStatus === 'REJECTED') {
+    status = 'REJECTED';
+  } else if (rawStatus === 'CANCELLED' || rawStatus === 'FAILED' || rawStatus === 'REFUNDED') {
+    status = 'CANCELLED';
+  }
+
+  const items = (bo.items && bo.items.length > 0)
+    ? bo.items.map((it) => ({
+        id: String(it.order_item_id),
+        name: it.name || `Item #${it.order_item_id}`,
+        quantity: it.quantity,
+        price: Number(it.unit_price) || 0,
+      }))
+    : [
+        {
+          id: `item-${bo.order_id}`,
+          name: 'Food Order Items',
+          quantity: 1,
+          price: Number(bo.subtotal) || Number(bo.total_amount) || 0,
+        },
+      ];
+
+  const orderIdStr = String(bo.order_id);
+  const shortId = `#ORD-${orderIdStr.padStart(4, '0')}`;
+
+  return {
+    id: orderIdStr,
+    shortId,
+    customerName: `Customer #${bo.customer_id}`,
+    customerPhone: '+91 98765 43210',
+    status,
+    items,
+    subtotal: Number(bo.subtotal) || 0,
+    taxes: Number(bo.gst_amount) || 0,
+    deliveryFee: Number(bo.delivery_charge) || 0,
+    packagingFee: 0,
+    discount: Number(bo.discount_amount) || 0,
+    total: Number(bo.total_amount) || 0,
+    paymentStatus: 'PAID',
+    paymentMethod: 'Online UPI',
+    placedAt: bo.created_at || new Date().toISOString(),
+    prepTime: 25,
+    deliveryAddress: 'Customer Delivery Address',
+    timeline: [
+      {
+        status,
+        timestamp: bo.created_at || new Date().toISOString(),
+        label: status === 'PLACED' ? 'Order Placed' : status,
+      },
+    ],
+  };
+}
+
+/** GET /api/v1/orders */
+export async function apiGetOrders(): Promise<BackendOrderListResponse> {
+  return request<BackendOrderListResponse>('/api/v1/orders', {
+    method: 'GET',
+  });
+}
+
+/** GET /api/v1/orders/{order_id} */
+export async function apiGetOrder(orderId: string | number): Promise<BackendOrder> {
+  return request<BackendOrder>(`/api/v1/orders/${encodeURIComponent(orderId)}`, {
+    method: 'GET',
+  });
+}
+
+/** PATCH /api/v1/orders/{order_id}/accept */
+export async function apiAcceptOrder(orderId: string | number): Promise<BackendOrder> {
+  return request<BackendOrder>(`/api/v1/orders/${encodeURIComponent(orderId)}/accept`, {
+    method: 'PATCH',
+  });
+}
+
+/** PATCH /api/v1/orders/{order_id}/reject */
+export async function apiRejectOrder(orderId: string | number): Promise<BackendOrder> {
+  return request<BackendOrder>(`/api/v1/orders/${encodeURIComponent(orderId)}/reject`, {
+    method: 'PATCH',
+  });
+}
+
+/** PATCH /api/v1/orders/{order_id}/preparing */
+export async function apiPreparingOrder(orderId: string | number): Promise<BackendOrder> {
+  return request<BackendOrder>(`/api/v1/orders/${encodeURIComponent(orderId)}/preparing`, {
+    method: 'PATCH',
+  });
+}
+
+/** PATCH /api/v1/orders/{order_id}/ready */
+export async function apiReadyOrder(orderId: string | number): Promise<BackendOrder> {
+  return request<BackendOrder>(`/api/v1/orders/${encodeURIComponent(orderId)}/ready`, {
+    method: 'PATCH',
+  });
+}
+
