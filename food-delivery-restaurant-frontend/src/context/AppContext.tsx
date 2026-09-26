@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Order, MenuItem, Category, ItemAvailability } from '@/data/mockData';
+import { Delivery, DeliveryStage } from '@/types/delivery';
 import {
   RegistrationStatus,
   RegistrationStatusResponse,
@@ -23,7 +24,9 @@ import {
   apiUpdateMenuItemAvailability,
   MenuItemAvailability,
   MenuItemResponse,
+  API_BASE_URL,
   getAuthToken,
+  getValidAuthToken,
   apiGetOrder,
   apiGetOrders,
   apiAcceptOrder,
@@ -31,6 +34,9 @@ import {
   apiPreparingOrder,
   apiReadyOrder,
   mapBackendOrderToFrontend,
+  apiGetDeliveries,
+  apiGetDelivery,
+  mapBackendDeliveryToFrontend,
 } from '@/services/api';
 
 export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
@@ -77,6 +83,8 @@ interface AppState {
   toggleDarkMode: () => void;
   orders: Order[];
   loadOrders: () => Promise<void>;
+  deliveries: Delivery[];
+  loadDeliveries: () => Promise<void>;
   addOrder: (o: Order) => void;
   updateOrderStatus: (id: string, status: Order['status']) => Promise<void>;
   selectedOrderId: string | null;
@@ -126,6 +134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [offlineReason, setOfflineReason] = useState('');
   const [darkMode, setDarkMode] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -259,18 +268,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [addToast]);
 
-  // Real-time WebSocket connection for live orders
+  // Load deliveries from backend REST
+  const loadDeliveries = useCallback(async () => {
+    try {
+      const res = await apiGetDeliveries();
+      if (res && Array.isArray(res.deliveries)) {
+        const mapped = res.deliveries.map(mapBackendDeliveryToFrontend);
+        setDeliveries(mapped);
+      }
+    } catch (err) {
+      console.error("Failed to load deliveries:", err);
+    }
+  }, []);
+
+  // Real-time WebSocket connection for live orders and deliveries
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const token = getAuthToken();
-    const wsUrl = `ws://localhost:8000/api/v1/ws/orders${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     let socket: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
+    let isCancelled = false;
 
-    function connectWs() {
+    async function connectWs() {
+      if (isCancelled) return;
+
       try {
-        socket = new WebSocket(wsUrl);
+        const token = await getValidAuthToken();
+        if (!token) {
+          console.warn("[WS] No valid auth token available, skipping WebSocket connection.");
+          return;
+        }
+
+        if (isCancelled) return;
+
+        // Use the same origin as REST by default. This lets the browser send the
+        // HttpOnly authentication cookie through Next's /api rewrite. When an
+        // external API URL is configured, fall back to the short-lived token
+        // because browsers cannot attach custom headers to WebSocket handshakes.
+        const apiUrl = new URL(API_BASE_URL || window.location.origin, window.location.origin);
+        apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        apiUrl.pathname = '/api/v1/ws/orders';
+        apiUrl.search = apiUrl.origin === window.location.origin
+          ? ''
+          : `?token=${encodeURIComponent(token)}`;
+        socket = new WebSocket(apiUrl.toString());
 
         socket.onopen = () => {
           console.log("CONNECTED");
@@ -280,7 +321,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.log("MESSAGE:", event.data);
           try {
             const data = JSON.parse(event.data);
-            if (data?.event === "NEW_ORDER") {
+            const eventType = data?.event;
+
+            if (eventType === "NEW_ORDER") {
               const backendOrder = await apiGetOrder(data.order_id);
               const mappedOrder = mapBackendOrderToFrontend(backendOrder);
               setOrders((previousOrders) => [
@@ -293,6 +336,117 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 message: `Order ${mappedOrder.shortId} has been placed.`,
               });
               setNewOrderCount((prev) => prev + 1);
+
+              // Also refresh deliveries so the new order appears under WAITING_FOR_PARTNER
+              loadDeliveries();
+              return;
+            }
+
+            // Delivery events
+            const orderId = Number(data.order_id);
+            const assignmentId = data.assignment_id;
+            const status = data.status;
+
+            const deliveryEventToastMap: Record<string, { title: string; message: string; type: 'info' | 'success' | 'warning' }> = {
+              DELIVERY_PARTNER_ASSIGNED: {
+                title: "🚴 Partner Assigned",
+                message: `Delivery partner assigned for Order #ORD${String(orderId).padStart(4, '0')}`,
+                type: 'info',
+              },
+              DELIVERY_PARTNER_ACCEPTED: {
+                title: "✅ Partner Accepted",
+                message: `Delivery partner accepted Order #ORD${String(orderId).padStart(4, '0')}`,
+                type: 'info',
+              },
+              DELIVERY_PARTNER_ARRIVED: {
+                title: "📍 Partner Arrived",
+                message: `Delivery partner arrived at restaurant for Order #ORD${String(orderId).padStart(4, '0')}`,
+                type: 'success',
+              },
+              ORDER_PICKED_UP: {
+                title: "📦 Order Picked Up",
+                message: `Order #ORD${String(orderId).padStart(4, '0')} has been picked up`,
+                type: 'success',
+              },
+              DELIVERY_PARTNER_ARRIVED_CUSTOMER: {
+                title: "🏠 Arrived at Customer",
+                message: `Partner reached customer location for Order #ORD${String(orderId).padStart(4, '0')}`,
+                type: 'info',
+              },
+              ORDER_DELIVERED: {
+                title: "🎉 Order Delivered",
+                message: `Order #ORD${String(orderId).padStart(4, '0')} delivered successfully!`,
+                type: 'success',
+              },
+              DELIVERY_PARTNER_CANCELLED: {
+                title: "⚠️ Partner Cancelled",
+                message: `Delivery partner cancelled Order #ORD${String(orderId).padStart(4, '0')}`,
+                type: 'warning',
+              },
+              DELIVERY_PARTNER_REASSIGNED: {
+                title: "🔄 Partner Reassigned",
+                message: `Order #ORD${String(orderId).padStart(4, '0')} reassigned to new partner`,
+                type: 'info',
+              },
+            };
+
+            const toastCfg = deliveryEventToastMap[eventType];
+            if (toastCfg) {
+              addToast(toastCfg);
+            }
+
+            // Map WebSocket event to frontend stage
+            let nextStage: DeliveryStage | null = null;
+            if (
+              eventType === "DELIVERY_PARTNER_ASSIGNED" ||
+              eventType === "DELIVERY_PARTNER_ACCEPTED" ||
+              eventType === "DELIVERY_PARTNER_REASSIGNED"
+            ) {
+              nextStage = "ASSIGNED";
+            } else if (eventType === "DELIVERY_PARTNER_ARRIVED") {
+              nextStage = "ARRIVED";
+            } else if (eventType === "ORDER_PICKED_UP") {
+              nextStage = "PICKED_UP";
+            } else if (eventType === "DELIVERY_PARTNER_ARRIVED_CUSTOMER") {
+              nextStage = "IN_TRANSIT";
+            } else if (eventType === "ORDER_DELIVERED") {
+              nextStage = "DELIVERED";
+            } else if (eventType === "DELIVERY_PARTNER_CANCELLED") {
+              nextStage = "WAITING_FOR_PARTNER";
+            }
+
+            if (nextStage) {
+              try {
+                const freshDelivery = await apiGetDelivery(orderId);
+                const mapped = mapBackendDeliveryToFrontend(freshDelivery);
+                mapped.stage = nextStage;
+                if (status) mapped.assignmentStatus = status;
+                if (assignmentId) mapped.assignmentId = assignmentId;
+                if (nextStage === "DELIVERED") mapped.etaMinutes = 0;
+
+                setDeliveries((prev) => {
+                  const exists = prev.some((d) => d.orderId === orderId || d.id === mapped.id);
+                  if (exists) {
+                    return prev.map((d) => (d.orderId === orderId || d.id === mapped.id ? mapped : d));
+                  }
+                  return [mapped, ...prev];
+                });
+              } catch (err) {
+                // A WebSocket event has only partial data. Preserve the last
+                // REST record rather than manufacturing delivery details.
+                console.warn("Could not refresh delivery from REST:", err);
+              }
+
+              // Update order state in orders page if order status changed
+              if (eventType === "ORDER_PICKED_UP") {
+                setOrders((prev) =>
+                  prev.map((o) => (o.id === String(orderId) ? { ...o, status: "PICKED_UP" } : o))
+                );
+              } else if (eventType === "ORDER_DELIVERED") {
+                setOrders((prev) =>
+                  prev.map((o) => (o.id === String(orderId) ? { ...o, status: "DELIVERED" } : o))
+                );
+              }
             }
           } catch (err) {
             console.error("Error processing websocket order:", err);
@@ -301,7 +455,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         socket.onclose = (event) => {
           console.log("CLOSED:", event.code);
-          if (event.code !== 1000 && event.code !== 1008) {
+          if (isCancelled) return;
+          if (event.code !== 1000) {
             reconnectTimeout = setTimeout(connectWs, 3000);
           }
         };
@@ -311,18 +466,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
       } catch (err) {
         console.error("Failed to establish WebSocket:", err);
+        if (!isCancelled) {
+          reconnectTimeout = setTimeout(connectWs, 3000);
+        }
       }
     }
 
     connectWs();
 
     return () => {
+      isCancelled = true;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (socket) {
         socket.close(1000);
       }
     };
-  }, [isAuthenticated, addToast]);
+  }, [isAuthenticated, addToast, loadDeliveries]);
 
   // Silent token refresh using backend /api/v1/auth/refresh
   const refreshToken = useCallback(async () => {
@@ -716,8 +875,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (isAuthenticated) {
       loadCategories();
       loadOrders();
+      loadDeliveries();
     }
-  }, [isAuthenticated, loadCategories, loadOrders]);
+  }, [isAuthenticated, loadCategories, loadOrders, loadDeliveries]);
 
   const addCategory = useCallback(
     async (name: string, visible: boolean = true): Promise<Category> => {
@@ -797,6 +957,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toggleDarkMode,
         orders,
         loadOrders,
+        deliveries,
+        loadDeliveries,
         addOrder,
         updateOrderStatus,
         selectedOrderId,

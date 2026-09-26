@@ -244,8 +244,11 @@ export interface DeliveryPartner {
 export interface Delivery {
   id: string;
   shortId: string;
+  orderId?: number;
+  assignmentId?: number;
   orderShortId: string;
   customerName: string;
+  customerPhone?: string;
   stage: DeliveryStage;
   etaMinutes: number;
   partner?: DeliveryPartner;
@@ -253,6 +256,8 @@ export interface Delivery {
   distance: number;
   otp?: string;
   timeline: { stage: DeliveryStage; timestamp: string; label: string }[];
+  order?: Order;
+  assignmentStatus?: string;
 }
 
 const partnerNames = ['Ramesh K', 'Suresh P', 'Mahesh B', 'Ganesh S', 'Lokesh M', 'Deepak R', 'Naveen J', 'Prakash T'];
@@ -260,55 +265,22 @@ const vehicleTypes = ['Bike', 'Scooter', 'Bicycle'];
 const vehicleNumbers = ['KA01 AB 1234', 'KA02 CD 5678', 'KA03 EF 9012', 'KA04 GH 3456', 'KA05 IJ 7890'];
 
 export function generateDelivery(stage?: DeliveryStage): Delivery {
-  const stages: DeliveryStage[] = ['WAITING_FOR_PARTNER', 'ASSIGNED', 'ARRIVING', 'ARRIVED', 'PICKUP_VERIFICATION', 'HANDOVER', 'PICKED_UP', 'IN_TRANSIT'];
-  const finalStage = stage ?? rand(stages);
-  const hasPartner = finalStage !== 'WAITING_FOR_PARTNER';
-  const partner: DeliveryPartner | undefined = hasPartner
-    ? {
-        name: rand(partnerNames),
-        phone: `+91 ${randInt(70000, 99999)} ${randInt(10000, 99999)}`,
-        vehicle: rand(vehicleNumbers),
-        vehicleType: rand(vehicleTypes),
-        rating: Number((3.8 + Math.random() * 1.2).toFixed(1)),
-        photo: '',
-      }
-    : undefined;
-
-  const minsAgo = randInt(1, 40);
-  const timeline: Delivery['timeline'] = [{ stage: 'WAITING_FOR_PARTNER', timestamp: timeAgo(minsAgo), label: 'Searching for partner' }];
-  const stageLabels: Record<DeliveryStage, string> = {
-    WAITING_FOR_PARTNER: 'Searching for partner',
-    ASSIGNED: 'Partner assigned',
-    ARRIVING: 'Partner arriving',
-    ARRIVED: 'Partner arrived at restaurant',
-    PICKUP_VERIFICATION: 'Pickup verification',
-    HANDOVER: 'Handover in progress',
-    PICKED_UP: 'Picked up',
-    IN_TRANSIT: 'In transit',
-    DELIVERED: 'Delivered',
-  };
-  const stageIndex = deliveryStageOrder.indexOf(finalStage);
-  for (let i = 1; i <= stageIndex; i++) {
-    timeline.push({ stage: deliveryStageOrder[i], timestamp: timeAgo(Math.max(0, minsAgo - i * 2)), label: stageLabels[deliveryStageOrder[i]] });
-  }
-
   return {
-    id: `del-${Math.random().toString(36).slice(2)}`,
-    shortId: `DLV${randInt(10000, 99999)}`,
-    orderShortId: `ORD${randInt(10000, 99999)}`,
-    customerName: rand(customerNames),
-    stage: finalStage,
-    etaMinutes: randInt(2, 25),
-    partner,
-    address: rand(addresses),
-    distance: Number((0.5 + Math.random() * 5).toFixed(1)),
-    otp: ['PICKUP_VERIFICATION', 'HANDOVER'].includes(finalStage) ? String(randInt(1000, 9999)) : undefined,
-    timeline,
+    id: '',
+    shortId: '',
+    orderId: 0,
+    orderShortId: '',
+    customerName: '',
+    stage: stage || 'WAITING_FOR_PARTNER',
+    etaMinutes: 0,
+    address: '',
+    distance: 0,
+    timeline: [],
   };
 }
 
 export function generateDeliveries(count: number): Delivery[] {
-  return Array.from({ length: count }, () => generateDelivery());
+  return [];
 }
 
 export type DeliveryExceptionType = 'PARTNER_CANCEL' | 'REASSIGNMENT' | 'DELAYED_PICKUP' | 'ADDRESS_ISSUE' | 'DELIVERY_FAILURE';
@@ -331,13 +303,7 @@ export interface DeliveryException {
   time: string;
 }
 
-export const mockDeliveryExceptions: DeliveryException[] = [
-  { id: 'de1', type: 'PARTNER_CANCEL', deliveryShortId: 'DLV34212', customerName: 'Rahul Sharma', note: 'Partner cancelled due to vehicle breakdown. Reassigning to nearest available partner.', actionLabel: 'Reassign Now', time: '3 min ago' },
-  { id: 'de2', type: 'DELAYED_PICKUP', deliveryShortId: 'DLV33987', customerName: 'Priya Patel', note: 'Partner running 12 min late for pickup. Customer has been notified.', actionLabel: 'Contact Partner', time: '8 min ago' },
-  { id: 'de3', type: 'ADDRESS_ISSUE', deliveryShortId: 'DLV33554', customerName: 'Amit Kumar', note: 'Customer address not reachable. Awaiting confirmation of alternate landmark.', actionLabel: 'Call Customer', time: '15 min ago' },
-  { id: 'de4', type: 'REASSIGNMENT', deliveryShortId: 'DLV33102', customerName: 'Sneha Reddy', note: 'Previous partner unresponsive for 10 min. Auto-reassigning to new partner.', actionLabel: 'Confirm Reassign', time: '22 min ago' },
-  { id: 'de5', type: 'DELIVERY_FAILURE', deliveryShortId: 'DLV32890', customerName: 'Vikram Singh', note: 'Customer unavailable at delivery location. Order returned to restaurant.', actionLabel: 'View Details', time: '35 min ago' },
-];
+export const mockDeliveryExceptions: DeliveryException[] = [];
 
 // ===== Earnings mock data =====
 

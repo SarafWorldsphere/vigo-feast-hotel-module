@@ -12,21 +12,23 @@ router = APIRouter()
 
 @router.websocket("/ws/orders")
 async def restaurant_orders_websocket(websocket: WebSocket):
-    db: Session = SessionLocal()
+    access_token = websocket.cookies.get("access_token") or websocket.query_params.get("token")
+
+    if not access_token:
+        print("[WS AUTH] Reject: No access_token provided in cookies or query param")
+        await websocket.close(code=1008)
+        return
 
     try:
-        access_token = websocket.cookies.get("access_token") or websocket.query_params.get("token")
+        owner_id = decode_access_token(access_token)
+    except ValueError as e:
+        print(f"[WS AUTH] Reject: decode_access_token failed: {e}")
+        await websocket.close(code=1008)
+        return
 
-        if not access_token:
-            await websocket.close(code=1008)
-            return
-
-        try:
-            owner_id = decode_access_token(access_token)
-        except ValueError:
-            await websocket.close(code=1008)
-            return
-
+    # Look up the restaurant and immediately release the database connection
+    db: Session = SessionLocal()
+    try:
         restaurant = (
             db.query(Restaurant)
             .filter(
@@ -35,24 +37,24 @@ async def restaurant_orders_websocket(websocket: WebSocket):
             )
             .first()
         )
-
-        if not restaurant:
-            await websocket.close(code=1008)
-            return
-
-        restaurant_id = str(restaurant.id)
-
-        await websocket_manager.connect(
-            restaurant_id,
-            websocket,
-        )
-
-        try:
-            while True:
-                await websocket.receive_text()
-
-        except WebSocketDisconnect:
-            websocket_manager.disconnect(restaurant_id,websocket,)
-
     finally:
         db.close()
+
+    if not restaurant:
+        print(f"[WS AUTH] Reject: No active restaurant found for owner_id={owner_id}")
+        await websocket.close(code=1008)
+        return
+
+    restaurant_id = str(restaurant.id)
+    print(f"[WS AUTH] Accepted connection for restaurant_id={restaurant_id}, owner_id={owner_id}")
+
+    await websocket_manager.connect(
+        restaurant_id,
+        websocket,
+    )
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(restaurant_id, websocket)

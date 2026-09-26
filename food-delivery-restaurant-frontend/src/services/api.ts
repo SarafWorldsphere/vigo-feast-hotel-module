@@ -1,6 +1,7 @@
 // Real API client connecting to FastAPI backend
 
 import type { Order, OrderStatus } from '@/data/mockData';
+import type { Delivery, DeliveryStage, DeliveryPartner } from '@/types/delivery';
 
 export const API_BASE_URL =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) ||
@@ -287,6 +288,34 @@ export async function apiRefreshToken(): Promise<{ message: string; access_token
   return res;
 }
 
+export function isTokenExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return true;
+    const payload = JSON.parse(atob(parts[1]));
+    // Buffer of 30 seconds before actual exp
+    return (payload.exp * 1000) < (Date.now() + 30000);
+  } catch {
+    return true;
+  }
+}
+
+export async function getValidAuthToken(): Promise<string | null> {
+  let token = getAuthToken();
+  if (!token || isTokenExpired(token)) {
+    try {
+      const res = await apiRefreshToken();
+      if (res?.access_token) {
+        token = res.access_token;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return token;
+}
+
 /**
  * POST /api/v1/auth/logout
  * Revokes refresh session and clears auth cookies
@@ -568,3 +597,161 @@ export async function apiReadyOrder(orderId: string | number): Promise<BackendOr
   });
 }
 
+export interface BackendDeliveryPartner {
+  partner_id: number;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  vehicle_type?: string | null;
+  vehicle_number?: string | null;
+  rating?: number;
+  photo?: string | null;
+}
+
+export interface BackendCustomer {
+  customer_id: number;
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+}
+
+export interface BackendAssignment {
+  assignment_id?: number | null;
+  partner_id?: number | null;
+  order_id: number;
+  assignment_status?: string | null;
+  assigned_at?: string | null;
+  accepted_at?: string | null;
+  arrived_at_restaurant?: string | null;
+  picked_up_at?: string | null;
+  arrived_at_customer?: string | null;
+  delivered_at?: string | null;
+}
+
+export interface BackendDelivery {
+  id: string;
+  short_id: string;
+  order_id: number;
+  order_short_id: string;
+  stage: string;
+  order: BackendOrder;
+  customer: BackendCustomer;
+  delivery_partner?: BackendDeliveryPartner | null;
+  assignment?: BackendAssignment | null;
+  delivery_status: string;
+}
+
+export interface BackendDeliveryListResponse {
+  deliveries: BackendDelivery[];
+  total: number;
+}
+
+export function mapBackendDeliveryToFrontend(bd: BackendDelivery): Delivery {
+  const stage = bd.stage as DeliveryStage;
+
+  const partner: DeliveryPartner | undefined = bd.delivery_partner
+    ? {
+        name: bd.delivery_partner.name,
+        phone: bd.delivery_partner.phone ?? undefined,
+        vehicleType: bd.delivery_partner.vehicle_type ?? undefined,
+        vehicleNumber: bd.delivery_partner.vehicle_number ?? undefined,
+        rating: bd.delivery_partner.rating ?? undefined,
+      }
+    : undefined;
+
+  const timeline: Delivery['timeline'] = [];
+  if (bd.order.created_at) {
+    timeline.push({
+      stage: 'WAITING_FOR_PARTNER',
+      timestamp: bd.order.created_at,
+      label: 'Order ready for partner assignment',
+    });
+  }
+
+  if (bd.assignment?.assigned_at) {
+    timeline.push({
+      stage: 'ASSIGNED',
+      timestamp: bd.assignment.assigned_at,
+      label: 'Partner Assigned',
+    });
+  }
+  if (bd.assignment?.accepted_at) {
+    timeline.push({
+      stage: 'ARRIVING',
+      timestamp: bd.assignment.accepted_at,
+      label: 'Partner Heading to Restaurant',
+    });
+  }
+  if (bd.assignment?.arrived_at_restaurant) {
+    timeline.push({
+      stage: 'ARRIVED',
+      timestamp: bd.assignment.arrived_at_restaurant,
+      label: 'Partner Arrived at Restaurant',
+    });
+  }
+  if (bd.assignment?.picked_up_at) {
+    timeline.push({
+      stage: 'PICKED_UP',
+      timestamp: bd.assignment.picked_up_at,
+      label: 'Order Picked Up',
+    });
+  }
+  if (bd.assignment?.arrived_at_customer) {
+    timeline.push({
+      stage: 'IN_TRANSIT',
+      timestamp: bd.assignment.arrived_at_customer,
+      label: 'Arrived at Customer Location',
+    });
+  }
+  if (bd.assignment?.delivered_at) {
+    timeline.push({
+      stage: 'DELIVERED',
+      timestamp: bd.assignment.delivered_at,
+      label: 'Order Delivered',
+    });
+  }
+
+  const etaTimestamp = bd.order.delivery_eta ? new Date(bd.order.delivery_eta).getTime() : NaN;
+  const etaMinutes = Number.isFinite(etaTimestamp)
+    ? Math.max(0, Math.ceil((etaTimestamp - Date.now()) / 60_000))
+    : undefined;
+
+  return {
+    id: bd.id,
+    shortId: bd.short_id,
+    orderId: bd.order_id,
+    assignmentId: bd.assignment?.assignment_id || undefined,
+    orderShortId: bd.order_short_id,
+    customerName: bd.customer?.name ?? undefined,
+    customerPhone: bd.customer?.phone ?? undefined,
+    stage,
+    etaMinutes,
+    partner,
+    address: bd.customer?.address ?? undefined,
+    timeline,
+    order: {
+      total: Number(bd.order.total_amount),
+      items: (bd.order.items ?? []).map((item) => ({
+        id: String(item.order_item_id),
+        name: item.name ?? undefined,
+        quantity: item.quantity,
+        price: Number(item.unit_price),
+      })),
+    },
+    assignmentStatus: bd.delivery_status ?? bd.assignment?.assignment_status ?? undefined,
+  };
+}
+
+/** GET /api/v1/deliveries */
+export async function apiGetDeliveries(): Promise<BackendDeliveryListResponse> {
+  return request<BackendDeliveryListResponse>('/api/v1/deliveries', {
+    method: 'GET',
+  });
+}
+
+/** GET /api/v1/deliveries/{order_id} */
+export async function apiGetDelivery(orderId: string | number): Promise<BackendDelivery> {
+  return request<BackendDelivery>(`/api/v1/deliveries/${encodeURIComponent(orderId)}`, {
+    method: 'GET',
+  });
+}

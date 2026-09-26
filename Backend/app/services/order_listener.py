@@ -4,15 +4,13 @@ import os
 import select
 import socket
 import threading
+import time
 from urllib.parse import urlparse
 
 import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
-
-
-import time
 
 
 class OrderListener:
@@ -39,8 +37,18 @@ class OrderListener:
                     psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT
                 )
                 self.cursor = self.connection.cursor()
-                self.cursor.execute("LISTEN order_placed;")
-                print("OrderListener connected and listening to order_placed")
+                self.cursor.execute("""
+                    LISTEN order_placed;
+                    LISTEN delivery_partner_assigned;
+                    LISTEN delivery_partner_accepted;
+                    LISTEN delivery_partner_arrived;
+                    LISTEN order_picked_up;
+                    LISTEN delivery_partner_arrived_customer;
+                    LISTEN order_delivered;
+                    LISTEN delivery_partner_cancelled;
+                    LISTEN delivery_partner_reassigned;
+                """)
+                print("OrderListener connected and listening to order and delivery events")
                 return
             except Exception:
                 try:
@@ -59,8 +67,18 @@ class OrderListener:
                             psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT
                         )
                         self.cursor = self.connection.cursor()
-                        self.cursor.execute("LISTEN order_placed;")
-                        print("OrderListener connected via IPv4 and listening to order_placed")
+                        self.cursor.execute("""
+                            LISTEN order_placed;
+                            LISTEN delivery_partner_assigned;
+                            LISTEN delivery_partner_accepted;
+                            LISTEN delivery_partner_arrived;
+                            LISTEN order_picked_up;
+                            LISTEN delivery_partner_arrived_customer;
+                            LISTEN order_delivered;
+                            LISTEN delivery_partner_cancelled;
+                            LISTEN delivery_partner_reassigned;
+                        """)
+                        print("OrderListener connected via IPv4 and listening to order and delivery events")
                         return
                 except Exception as e:
                     print(f"OrderListener connection attempt failed: {e}. Retrying in 3s...")
@@ -89,19 +107,56 @@ class OrderListener:
 
                 while self.connection.notifies:
                     notification = self.connection.notifies.pop(0)
+                    print(
+                        f"NOTIFICATION RECEIVED: "
+                        f"channel={notification.channel}, "
+                        f"payload={notification.payload}"
+                    )
 
                     payload = json.loads(notification.payload)
 
                     order_id = payload["order_id"]
                     restaurant_id = payload["restaurant_id"]
 
+                    event_mapping = {
+                        "order_placed": "NEW_ORDER",
+                        "delivery_partner_assigned": "DELIVERY_PARTNER_ASSIGNED",
+                        "delivery_partner_accepted": "DELIVERY_PARTNER_ACCEPTED",
+                        "delivery_partner_arrived": "DELIVERY_PARTNER_ARRIVED",
+                        "order_picked_up": "ORDER_PICKED_UP",
+                        "delivery_partner_arrived_customer": "DELIVERY_PARTNER_ARRIVED_CUSTOMER",
+                        "order_delivered": "ORDER_DELIVERED",
+                        "delivery_partner_cancelled": "DELIVERY_PARTNER_CANCELLED",
+                        "delivery_partner_reassigned": "DELIVERY_PARTNER_REASSIGNED",
+                    }
+
+                    event_name = event_mapping.get(notification.channel)
+                    print(f"EVENT MAPPED: {event_name}")
+
+                    if not event_name:
+                        continue
+
+                    event_data = {
+                        "event": event_name,
+                        "order_id": order_id,
+                    }
+
+                    # Include delivery-specific information when available.
+                    for key in (
+                        "assignment_id",
+                        "partner_id",
+                        "status",
+                        "eta_minutes",
+                    ):
+                        if key in payload:
+                            event_data[key] = payload[key]
+
+                    print(f"SENDING TO RESTAURANT: {event_data}")
+
                     asyncio.run_coroutine_threadsafe(
                         self.websocket_manager.send_to_restaurant(
                             restaurant_id,
-                            {
-                                "event": "NEW_ORDER",
-                                "order_id": order_id,
-                            },
+                            event_data,
                         ),
                         self.loop,
                     )
