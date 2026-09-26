@@ -4,7 +4,7 @@ import { Order, OrderStatus, OrderTab } from '@/data/mockData';
 import { StatusChip, getStatusConfig } from '@/components/ui/StatusChip';
 import {
   X, Clock, MapPin, Phone, CreditCard, Bike, CheckCircle2, XCircle,
-  ChefHat, PackageCheck, QrCode, Star, IndianRupee, Timer, ArrowRight,
+  ChefHat, PackageCheck, Star, IndianRupee, Timer,
   RefreshCw,
 } from 'lucide-react';
 
@@ -49,13 +49,12 @@ export function OrdersPage() {
 
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null;
 
-  const handleAction = async (order: Order, action: 'accept' | 'reject' | 'prepare' | 'ready' | 'pickup') => {
+  const handleAction = async (order: Order, action: 'accept' | 'reject' | 'prepare' | 'ready') => {
     const actionMap = {
       accept: { status: 'ACCEPTED' as OrderStatus, label: 'Order accepted', type: 'success' as const },
       reject: { status: 'REJECTED' as OrderStatus, label: 'Order rejected', type: 'error' as const },
       prepare: { status: 'PREPARING' as OrderStatus, label: 'Preparation started', type: 'info' as const },
       ready: { status: 'READY_FOR_PICKUP' as OrderStatus, label: 'Order marked ready', type: 'success' as const },
-      pickup: { status: 'PICKED_UP' as OrderStatus, label: 'Pickup verified', type: 'success' as const },
     };
     const cfg = actionMap[action];
     try {
@@ -215,12 +214,12 @@ function OrderCard({ order, index, onClick, onAction }: {
           )}
           {order.status === 'PREPARING' && (
             <button onClick={() => onAction('ready')} className="btn-success flex-1 text-xs py-2">
-              <PackageCheck className="w-4 h-4" /> Mark Ready
+              <PackageCheck className="w-4 h-4" /> Ready for pickup
             </button>
           )}
           {order.status === 'READY_FOR_PICKUP' && (
-            <button onClick={() => onAction('pickup')} className="btn-primary flex-1 text-xs py-2">
-              <QrCode className="w-4 h-4" /> Verify Pickup
+            <button onClick={() => onAction('ready')} className="btn-primary flex-1 text-xs py-2 flex items-center justify-center gap-1.5">
+              <PackageCheck className="w-4 h-4" /> Ready for pickup
             </button>
           )}
         </div>
@@ -232,12 +231,8 @@ function OrderCard({ order, index, onClick, onAction }: {
 function OrderDrawer({ order, onClose, onAction }: {
   order: Order;
   onClose: () => void;
-  onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready' | 'pickup') => void;
+  onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready') => void;
 }) {
-  const [showOTP, setShowOTP] = useState(false);
-  const [otpInput, setOtpInput] = useState('');
-  const [otpError, setOtpError] = useState(false);
-
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
@@ -246,17 +241,6 @@ function OrderDrawer({ order, onClose, onAction }: {
   const lifecycleSteps: OrderStatus[] = ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'DELIVERED', 'COMPLETED'];
   const currentStepIndex = lifecycleSteps.indexOf(order.status);
   const isException = ['REJECTED', 'CANCELLED', 'FAILED', 'REFUNDED'].includes(order.status);
-
-  const handleVerifyOTP = () => {
-    if (otpInput === order.otp) {
-      onAction('pickup');
-      setShowOTP(false);
-      setOtpInput('');
-      setOtpError(false);
-    } else {
-      setOtpError(true);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -463,37 +447,14 @@ function OrderDrawer({ order, onClose, onAction }: {
             </button>
           )}
           {order.status === 'PREPARING' && (
-            <button onClick={() => onAction('ready')} className="btn-success w-full">
-              <PackageCheck className="w-5 h-5" /> Mark as Ready
+            <button onClick={() => onAction('ready')} className="btn-success w-full flex items-center justify-center gap-2">
+              <PackageCheck className="w-5 h-5" /> Ready for pickup
             </button>
           )}
-          {order.status === 'READY_FOR_PICKUP' && !showOTP && (
-            <button onClick={() => setShowOTP(true)} className="btn-primary w-full">
-              <QrCode className="w-5 h-5" /> Verify Pickup (OTP)
+          {order.status === 'READY_FOR_PICKUP' && (
+            <button onClick={() => onAction('ready')} className="btn-primary w-full flex items-center justify-center gap-2">
+              <PackageCheck className="w-5 h-5" /> Ready for pickup
             </button>
-          )}
-          {order.status === 'READY_FOR_PICKUP' && showOTP && (
-            <div className="space-y-2">
-              <p className="text-xs text-center text-gray-500 dark:text-gray-400">
-                Enter OTP: <span className="font-bold text-brand-600 dark:text-brand-400">{order.otp}</span> (demo)
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={otpInput}
-                  onChange={(e) => { setOtpInput(e.target.value); setOtpError(false); }}
-                  placeholder="Enter 4-digit OTP"
-                  className={`input text-center font-bold tracking-widest ${otpError ? 'border-red-500' : ''}`}
-                  autoFocus
-                />
-                <button onClick={handleVerifyOTP} className="btn-success px-4">
-                  <ArrowRight className="w-5 h-5" />
-                </button>
-              </div>
-              {otpError && <p className="text-xs text-red-500 text-center">Incorrect OTP. Try again.</p>}
-            </div>
           )}
           {['PICKED_UP', 'DELIVERED', 'COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED', 'REFUNDED'].includes(order.status) && (
             <div className="text-center text-sm text-gray-400 dark:text-gray-500 py-2">

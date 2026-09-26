@@ -49,7 +49,6 @@ export interface Order {
   };
   deliveryAddress: string;
   rating?: number;
-  otp?: string;
   timeline: { status: OrderStatus; timestamp: string; label: string }[];
 }
 
@@ -210,14 +209,12 @@ export type DeliveryStage =
   | 'ASSIGNED'
   | 'ARRIVING'
   | 'ARRIVED'
-  | 'PICKUP_VERIFICATION'
-  | 'HANDOVER'
   | 'PICKED_UP'
   | 'IN_TRANSIT'
   | 'DELIVERED';
 
 export const deliveryStageOrder: DeliveryStage[] = [
-  'WAITING_FOR_PARTNER', 'ASSIGNED', 'ARRIVING', 'ARRIVED', 'PICKUP_VERIFICATION', 'HANDOVER', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED',
+  'WAITING_FOR_PARTNER', 'ASSIGNED', 'ARRIVING', 'ARRIVED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED',
 ];
 
 export const deliveryStageConfig: Record<DeliveryStage, { label: string; bg: string; text: string; dot: string }> = {
@@ -225,8 +222,6 @@ export const deliveryStageConfig: Record<DeliveryStage, { label: string; bg: str
   ASSIGNED: { label: 'Assigned', bg: 'bg-indigo-50 dark:bg-indigo-500/10', text: 'text-indigo-700 dark:text-indigo-400', dot: 'bg-indigo-500' },
   ARRIVING: { label: 'Arriving', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500' },
   ARRIVED: { label: 'Arrived', bg: 'bg-cyan-50 dark:bg-cyan-500/10', text: 'text-cyan-700 dark:text-cyan-400', dot: 'bg-cyan-500' },
-  PICKUP_VERIFICATION: { label: 'Pickup Verification', bg: 'bg-purple-50 dark:bg-purple-500/10', text: 'text-purple-700 dark:text-purple-400', dot: 'bg-purple-500' },
-  HANDOVER: { label: 'Handover', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500' },
   PICKED_UP: { label: 'Picked Up', bg: 'bg-teal-50 dark:bg-teal-500/10', text: 'text-teal-700 dark:text-teal-400', dot: 'bg-teal-500' },
   IN_TRANSIT: { label: 'In Transit', bg: 'bg-orange-50 dark:bg-orange-500/10', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
   DELIVERED: { label: 'Delivered', bg: 'bg-emerald-50 dark:bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500' },
@@ -254,7 +249,6 @@ export interface Delivery {
   partner?: DeliveryPartner;
   address: string;
   distance: number;
-  otp?: string;
   timeline: { stage: DeliveryStage; timestamp: string; label: string }[];
   order?: Order;
   assignmentStatus?: string;

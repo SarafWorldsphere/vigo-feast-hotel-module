@@ -281,6 +281,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Update order status (with API call or local fallback)
+  const updateOrderStatus = useCallback(async (id: string, status: Order['status']) => {
+    // Map frontend action to backend API call
+    const actionApiMap: Partial<Record<Order['status'], (orderId: string | number) => Promise<any>>> = {
+      ACCEPTED: apiAcceptOrder,
+      REJECTED: apiRejectOrder,
+      PREPARING: apiPreparingOrder,
+      READY_FOR_PICKUP: apiReadyOrder,
+    };
+
+    const apiFn = actionApiMap[status];
+    if (apiFn) {
+      try {
+        const backendOrder = await apiFn(id);
+        const mapped = mapBackendOrderToFrontend(backendOrder);
+        setOrders((prev) =>
+          prev.map((o) => (o.id === id ? mapped : o))
+        );
+        return;
+      } catch (err) {
+        console.error(`Failed to update order ${id} to ${status}:`, err);
+        throw err;
+      }
+    }
+
+    // Fallback for statuses without a backend API yet (local-only update)
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id !== id) return o;
+        const labelMap: Record<Order['status'], string> = {
+          PLACED: 'Order Placed',
+          ACCEPTED: 'Order Accepted',
+          PREPARING: 'Preparation Started',
+          READY_FOR_PICKUP: 'Ready for Pickup',
+          PICKED_UP: 'Picked Up',
+          DELIVERED: 'Delivered',
+          COMPLETED: 'Completed',
+          REJECTED: 'Order Rejected',
+          CANCELLED: 'Order Cancelled',
+          FAILED: 'Order Failed',
+          REFUNDED: 'Order Refunded',
+        };
+        return {
+          ...o,
+          status,
+          timeline: [...o.timeline, { status, timestamp: new Date().toISOString(), label: labelMap[status] }],
+        };
+      })
+    );
+  }, []);
+
   // Real-time WebSocket connection for live orders and deliveries
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -339,6 +390,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
               // Also refresh deliveries so the new order appears under WAITING_FOR_PARTNER
               loadDeliveries();
+              return;
+            }
+
+            if (data?.event === "ORDER_PICKED_UP") {
+              updateOrderStatus(
+                String(data.order_id),
+                "PICKED_UP"
+              );
+
               return;
             }
 
@@ -481,7 +541,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         socket.close(1000);
       }
     };
-  }, [isAuthenticated, addToast, loadDeliveries]);
+  }, [isAuthenticated, addToast, loadDeliveries, updateOrderStatus]);
 
   // Silent token refresh using backend /api/v1/auth/refresh
   const refreshToken = useCallback(async () => {
@@ -691,55 +751,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setOrders((prev) => [o, ...prev]);
   }, []);
 
-  const updateOrderStatus = useCallback(async (id: string, status: Order['status']) => {
-    // Map frontend action to backend API call
-    const actionApiMap: Partial<Record<Order['status'], (orderId: string | number) => Promise<any>>> = {
-      ACCEPTED: apiAcceptOrder,
-      REJECTED: apiRejectOrder,
-      PREPARING: apiPreparingOrder,
-      READY_FOR_PICKUP: apiReadyOrder,
-    };
 
-    const apiFn = actionApiMap[status];
-    if (apiFn) {
-      try {
-        const backendOrder = await apiFn(id);
-        const mapped = mapBackendOrderToFrontend(backendOrder);
-        setOrders((prev) =>
-          prev.map((o) => (o.id === id ? mapped : o))
-        );
-        return;
-      } catch (err) {
-        console.error(`Failed to update order ${id} to ${status}:`, err);
-        throw err;
-      }
-    }
-
-    // Fallback for statuses without a backend API yet (local-only update)
-    setOrders((prev) =>
-      prev.map((o) => {
-        if (o.id !== id) return o;
-        const labelMap: Record<Order['status'], string> = {
-          PLACED: 'Order Placed',
-          ACCEPTED: 'Order Accepted',
-          PREPARING: 'Preparation Started',
-          READY_FOR_PICKUP: 'Ready for Pickup',
-          PICKED_UP: 'Picked Up',
-          DELIVERED: 'Delivered',
-          COMPLETED: 'Completed',
-          REJECTED: 'Order Rejected',
-          CANCELLED: 'Order Cancelled',
-          FAILED: 'Order Failed',
-          REFUNDED: 'Order Refunded',
-        };
-        return {
-          ...o,
-          status,
-          timeline: [...o.timeline, { status, timestamp: new Date().toISOString(), label: labelMap[status] }],
-        };
-      })
-    );
-  }, []);
 
   const updateMenuItem = useCallback((id: string, updates: Partial<MenuItem>) => {
     setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));

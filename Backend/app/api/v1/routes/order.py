@@ -359,6 +359,13 @@ def accept_order(
             detail="Order not found",
         )
 
+    if order.order_status == "ACCEPTED":
+        return get_restaurant_order(
+            order_id=order_id,
+            db=db,
+            owner=owner,
+        )
+
     if order.order_status != "ORDERED":
         raise HTTPException(
             status_code=400,
@@ -453,6 +460,9 @@ def mark_order_preparing(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    if order.order_status == "PREPARING":
+        return get_restaurant_order(order_id, db, owner)
+
     if order.order_status != "ACCEPTED":
         raise HTTPException(
             status_code=400,
@@ -497,6 +507,9 @@ def mark_order_ready(
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_status == "READY_FOR_PICKUP":
+        return get_restaurant_order(order_id, db, owner)
 
     if order.order_status != "PREPARING":
         raise HTTPException(

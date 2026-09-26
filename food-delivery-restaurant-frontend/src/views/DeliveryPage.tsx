@@ -3,7 +3,7 @@ import { useApp } from '@/context/AppContext';
 import { Delivery, DeliveryStage, deliveryStageOrder, deliveryStageConfig } from '@/types/delivery';
 import { PageSkeleton } from '@/components/ui/Skeletons';
 import {
-  X, Clock, MapPin, Phone, Star, Bike, Navigation, QrCode, ArrowRight,
+  X, Clock, MapPin, Phone, Star, Bike, Navigation, ArrowRight,
   AlertTriangle, RefreshCw, Truck, CheckCircle2, ChevronRight, Package,
 } from 'lucide-react';
 
