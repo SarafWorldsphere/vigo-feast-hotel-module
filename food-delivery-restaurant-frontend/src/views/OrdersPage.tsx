@@ -13,8 +13,8 @@ const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
   { id: 'ACCEPTED', label: 'Accepted', statuses: ['ACCEPTED'] },
   { id: 'PREPARING', label: 'Preparing', statuses: ['PREPARING'] },
   { id: 'READY', label: 'Ready', statuses: ['READY_FOR_PICKUP'] },
-  { id: 'PICKED_UP', label: 'Picked Up', statuses: ['PICKED_UP', 'DELIVERED'] },
-  { id: 'COMPLETED', label: 'Completed', statuses: ['COMPLETED'] },
+  { id: 'PICKED_UP', label: 'Picked Up', statuses: ['PICKED_UP'] },
+  { id: 'COMPLETED', label: 'Completed', statuses: ['DELIVERED', 'COMPLETED'] },
   { id: 'REJECTED', label: 'Rejected', statuses: ['REJECTED'] },
   { id: 'CANCELLED', label: 'Cancelled', statuses: ['CANCELLED', 'FAILED', 'REFUNDED'] },
 ];

@@ -35,7 +35,6 @@ import {
   apiReadyOrder,
   mapBackendOrderToFrontend,
   apiGetDeliveries,
-  apiGetDelivery,
   mapBackendDeliveryToFrontend,
 } from '@/services/api';
 
@@ -393,15 +392,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
               return;
             }
 
-            if (data?.event === "ORDER_PICKED_UP") {
-              updateOrderStatus(
-                String(data.order_id),
-                "PICKED_UP"
-              );
-
-              return;
-            }
-
             // Delivery events
             const orderId = Number(data.order_id);
             const assignmentId = data.assignment_id;
@@ -476,35 +466,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }
 
             if (nextStage) {
-              try {
-                const freshDelivery = await apiGetDelivery(orderId);
-                const mapped = mapBackendDeliveryToFrontend(freshDelivery);
-                mapped.stage = nextStage;
-                if (status) mapped.assignmentStatus = status;
-                if (assignmentId) mapped.assignmentId = assignmentId;
-                if (nextStage === "DELIVERED") mapped.etaMinutes = 0;
+              setDeliveries((prev) =>
+                prev.map((delivery) => {
+                  const sameOrder =
+                    String(delivery.orderId) === String(orderId);
 
-                setDeliveries((prev) => {
-                  const exists = prev.some((d) => d.orderId === orderId || d.id === mapped.id);
-                  if (exists) {
-                    return prev.map((d) => (d.orderId === orderId || d.id === mapped.id ? mapped : d));
+                  const sameAssignment =
+                    assignmentId &&
+                    String(delivery.assignmentId) === String(assignmentId);
+
+                  if (!sameOrder && !sameAssignment) {
+                    return delivery;
                   }
-                  return [mapped, ...prev];
-                });
-              } catch (err) {
-                // A WebSocket event has only partial data. Preserve the last
-                // REST record rather than manufacturing delivery details.
-                console.warn("Could not refresh delivery from REST:", err);
-              }
 
-              // Update order state in orders page if order status changed
+                  return {
+                    ...delivery,
+                    stage: nextStage,
+                    ...(status ? { assignmentStatus: status } : {}),
+                    ...(assignmentId
+                      ? { assignmentId: Number(assignmentId) }
+                      : {}),
+                    ...(nextStage === "DELIVERED"
+                      ? { etaMinutes: 0 }
+                      : {}),
+                  };
+                })
+              );
+
+              // Keep Orders page synchronized
               if (eventType === "ORDER_PICKED_UP") {
                 setOrders((prev) =>
-                  prev.map((o) => (o.id === String(orderId) ? { ...o, status: "PICKED_UP" } : o))
+                  prev.map((order) =>
+                    String(order.id) === String(orderId)
+                      ? { ...order, status: "PICKED_UP" }
+                      : order
+                  )
                 );
-              } else if (eventType === "ORDER_DELIVERED") {
+              }
+
+              if (eventType === "ORDER_DELIVERED") {
                 setOrders((prev) =>
-                  prev.map((o) => (o.id === String(orderId) ? { ...o, status: "DELIVERED" } : o))
+                  prev.map((order) =>
+                    String(order.id) === String(orderId)
+                      ? { ...order, status: "DELIVERED" }
+                      : order
+                  )
                 );
               }
             }

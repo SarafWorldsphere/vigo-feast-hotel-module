@@ -14,6 +14,18 @@ load_dotenv()
 
 
 class OrderListener:
+    CHANNELS = (
+        "order_placed",
+        "delivery_partner_assigned",
+        "delivery_partner_accepted",
+        "delivery_partner_arrived",
+        "order_picked_up",
+        "delivery_partner_arrived_customer",
+        "order_delivered",
+        "delivery_partner_cancelled",
+        "delivery_partner_reassigned",
+    )
+
     def __init__(self, websocket_manager):
         self.websocket_manager = websocket_manager
         self.loop = None
@@ -37,17 +49,9 @@ class OrderListener:
                     psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT
                 )
                 self.cursor = self.connection.cursor()
-                self.cursor.execute("""
-                    LISTEN order_placed;
-                    LISTEN delivery_partner_assigned;
-                    LISTEN delivery_partner_accepted;
-                    LISTEN delivery_partner_arrived;
-                    LISTEN order_picked_up;
-                    LISTEN delivery_partner_arrived_customer;
-                    LISTEN order_delivered;
-                    LISTEN delivery_partner_cancelled;
-                    LISTEN delivery_partner_reassigned;
-                """)
+                for channel in self.CHANNELS:
+                    self.cursor.execute(f"LISTEN {channel};")
+                    print(f"LISTENING TO CHANNEL: {channel}")
                 print("OrderListener connected and listening to order and delivery events")
                 return
             except Exception:
@@ -67,17 +71,9 @@ class OrderListener:
                             psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT
                         )
                         self.cursor = self.connection.cursor()
-                        self.cursor.execute("""
-                            LISTEN order_placed;
-                            LISTEN delivery_partner_assigned;
-                            LISTEN delivery_partner_accepted;
-                            LISTEN delivery_partner_arrived;
-                            LISTEN order_picked_up;
-                            LISTEN delivery_partner_arrived_customer;
-                            LISTEN order_delivered;
-                            LISTEN delivery_partner_cancelled;
-                            LISTEN delivery_partner_reassigned;
-                        """)
+                        for channel in self.CHANNELS:
+                            self.cursor.execute(f"LISTEN {channel};")
+                            print(f"LISTENING TO CHANNEL: {channel}")
                         print("OrderListener connected via IPv4 and listening to order and delivery events")
                         return
                 except Exception as e:
