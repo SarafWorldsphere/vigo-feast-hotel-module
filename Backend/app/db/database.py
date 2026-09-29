@@ -14,9 +14,9 @@ if not DATABASE_URL:
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=3,
-    max_overflow=2,
-    pool_timeout=10,
+    pool_size=10,
+    max_overflow=10,
+    pool_timeout=30,
     pool_recycle=300,
 )
 
