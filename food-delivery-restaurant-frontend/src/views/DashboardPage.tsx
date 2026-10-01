@@ -6,18 +6,58 @@ import { PageSkeleton } from '@/components/ui/Skeletons';
 import { FoodImage } from '@/components/ui/FoodImage';
 import {
   ShoppingBag, IndianRupee, Star, Clock, TrendingUp, TrendingDown,
-  CheckCircle2, XCircle, AlertTriangle, Info, CheckCircle, ArrowUpRight, Bell,
+  CheckCircle2, XCircle, AlertTriangle, Info, CheckCircle, ArrowUpRight, Bell, X,
 } from 'lucide-react';
 
 export function DashboardPage() {
-  const { setPage, isOnline, registrationStatus } = useApp();
+  const { setPage, isOnline, registrationStatus, statusDetails, owner } = useApp();
   const [loading, setLoading] = useState(true);
-  const [showApprovedBanner, setShowApprovedBanner] = useState(true);
+  const [showApprovedBanner, setShowApprovedBanner] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 600);
     return () => clearTimeout(timer);
   }, []);
+
+  // Check if banner was already dismissed forever
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const keys = [
+        statusDetails?.restaurant_id ? `nfd_approved_banner_dismissed_${statusDetails.restaurant_id}` : null,
+        owner?.id ? `nfd_approved_banner_dismissed_${owner.id}` : null,
+        owner?.email ? `nfd_approved_banner_dismissed_${owner.email}` : null,
+      ].filter(Boolean) as string[];
+
+      const isDismissed = keys.length > 0
+        ? keys.some((k) => localStorage.getItem(k) === 'true')
+        : localStorage.getItem('nfd_approved_banner_dismissed') === 'true';
+
+      setShowApprovedBanner(!isDismissed);
+    } catch {
+      setShowApprovedBanner(true);
+    }
+  }, [statusDetails?.restaurant_id, owner?.id, owner?.email]);
+
+  const handleDismissBanner = () => {
+    setShowApprovedBanner(false);
+    if (typeof window !== 'undefined') {
+      try {
+        if (statusDetails?.restaurant_id) {
+          localStorage.setItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`, 'true');
+        }
+        if (owner?.id) {
+          localStorage.setItem(`nfd_approved_banner_dismissed_${owner.id}`, 'true');
+        }
+        if (owner?.email) {
+          localStorage.setItem(`nfd_approved_banner_dismissed_${owner.email}`, 'true');
+        }
+        localStorage.setItem('nfd_approved_banner_dismissed', 'true');
+      } catch {
+        // ignore localStorage errors (e.g. private browsing storage limits)
+      }
+    }
+  };
 
   if (loading) return <PageSkeleton />;
 
@@ -68,11 +108,11 @@ export function DashboardPage() {
           </div>
           <button
             type="button"
-            onClick={() => setShowApprovedBanner(false)}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 text-xs"
+            onClick={handleDismissBanner}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg p-1.5 transition-colors"
             aria-label="Dismiss banner"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}

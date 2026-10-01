@@ -7,6 +7,7 @@ from app.api.v1.routes.menu import router as menu_router
 from app.api.v1.routes.order import router as order_router
 from app.api.v1.routes.registration import router as registration_router
 from app.api.v1.routes.websocket import router as websocket_router
+from app.api.v1.offers import router as offers_router
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -77,6 +78,11 @@ app.include_router(
 
 app.include_router(
     websocket_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    offers_router,
     prefix="/api/v1",
 )
 

@@ -13,3 +13,4 @@ from app.models.order_item import OrderItem
 from app.models.delivery_partner_assignment import DeliveryPartnerAssignment
 from app.models.delivery_partner import DeliveryPartner
 from app.models.customer import Customer, CustomerAddress
+from app.models.offer import Offer, OfferCategory, OfferItem
