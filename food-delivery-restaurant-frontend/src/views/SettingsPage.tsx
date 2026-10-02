@@ -56,7 +56,7 @@ export function SettingsPage() {
       </div>
 
       <div className="w-full">
-        {activeTab === 'profile' && <ProfileTab onSave={() => addToast({ type: 'success', title: 'Profile saved', message: 'Restaurant profile updated' })} />}
+        {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'hours' && <HoursTab onSave={() => addToast({ type: 'success', title: 'Hours saved', message: 'Operating hours updated' })} />}
         {activeTab === 'status' && <StatusTab />}
         {activeTab === 'account' && <AccountTab onSave={() => addToast({ type: 'success', title: 'Account saved', message: 'Account details updated' })} />}
@@ -66,104 +66,311 @@ export function SettingsPage() {
   );
 }
 
-function ProfileTab({ onSave }: { onSave: () => void }) {
-  const [data, setData] = useState<RestaurantProfile>(mockRestaurantProfile);
-  const [logoUploaded, setLogoUploaded] = useState(false);
-  const [coverUploaded, setCoverUploaded] = useState(false);
+function ProfileTab() {
+  const { addToast } = useApp();
 
-  const update = (field: keyof RestaurantProfile, value: string) => {
-    setData((prev) => ({ ...prev, [field]: value }));
+  // Images state
+  const [savedImages, setSavedImages] = useState({ logo: false, cover: false });
+  const [images, setImages] = useState({ logo: false, cover: false });
+  const [updatingImages, setUpdatingImages] = useState(false);
+
+  // Basic info state
+  const [savedBasic, setSavedBasic] = useState({
+    name: mockRestaurantProfile.name,
+    description: mockRestaurantProfile.description,
+    phone: mockRestaurantProfile.phone,
+    email: mockRestaurantProfile.email,
+  });
+  const [basic, setBasic] = useState({
+    name: mockRestaurantProfile.name,
+    description: mockRestaurantProfile.description,
+    phone: mockRestaurantProfile.phone,
+    email: mockRestaurantProfile.email,
+  });
+  const [updatingBasic, setUpdatingBasic] = useState(false);
+
+  // Address state
+  const [savedAddress, setSavedAddress] = useState({
+    addressLine1: mockRestaurantProfile.addressLine1,
+    addressLine2: mockRestaurantProfile.addressLine2,
+    city: mockRestaurantProfile.city,
+    state: mockRestaurantProfile.state,
+    postalCode: mockRestaurantProfile.postalCode,
+  });
+  const [address, setAddress] = useState({
+    addressLine1: mockRestaurantProfile.addressLine1,
+    addressLine2: mockRestaurantProfile.addressLine2,
+    city: mockRestaurantProfile.city,
+    state: mockRestaurantProfile.state,
+    postalCode: mockRestaurantProfile.postalCode,
+  });
+  const [updatingAddress, setUpdatingAddress] = useState(false);
+
+  // Scoped dirty state checks
+  const isImagesDirty =
+    images.logo !== savedImages.logo ||
+    images.cover !== savedImages.cover;
+
+  const isBasicDirty =
+    basic.name !== savedBasic.name ||
+    basic.description !== savedBasic.description ||
+    basic.phone !== savedBasic.phone ||
+    basic.email !== savedBasic.email;
+
+  const isAddressDirty =
+    address.addressLine1 !== savedAddress.addressLine1 ||
+    address.addressLine2 !== savedAddress.addressLine2 ||
+    address.city !== savedAddress.city ||
+    address.state !== savedAddress.state ||
+    address.postalCode !== savedAddress.postalCode;
+
+  // Handlers
+  const handleUpdateImages = () => {
+    if (!isImagesDirty || updatingImages) return;
+    setUpdatingImages(true);
+    setTimeout(() => {
+      setSavedImages({ ...images });
+      setUpdatingImages(false);
+      addToast({
+        type: 'success',
+        title: 'Images updated',
+        message: 'Restaurant images have been updated successfully.',
+      });
+    }, 500);
+  };
+
+  const handleUpdateBasic = () => {
+    if (!isBasicDirty || updatingBasic) return;
+    setUpdatingBasic(true);
+    setTimeout(() => {
+      setSavedBasic({ ...basic });
+      setUpdatingBasic(false);
+      addToast({
+        type: 'success',
+        title: 'Basic information updated',
+        message: 'Restaurant details have been updated.',
+      });
+    }, 500);
+  };
+
+  const handleUpdateAddress = () => {
+    if (!isAddressDirty || updatingAddress) return;
+    setUpdatingAddress(true);
+    setTimeout(() => {
+      setSavedAddress({ ...address });
+      setUpdatingAddress(false);
+      addToast({
+        type: 'success',
+        title: 'Address updated',
+        message: 'Restaurant location and address have been updated.',
+      });
+    }, 500);
   };
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 animate-fade-in">
-      {/* Logo & Cover */}
-      <div className="card p-5">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-4">RESTAURANT IMAGES</h3>
-        <div className="space-y-3">
-          <MockUploadCard label="Restaurant Logo" uploaded={logoUploaded} onUpload={() => setLogoUploaded(true)} icon={ImageIcon} />
-          <MockUploadCard label="Cover Photo" uploaded={coverUploaded} onUpload={() => setCoverUploaded(true)} icon={ImageIcon} />
+      {/* 1. Restaurant Images */}
+      <div className="card p-5 flex flex-col justify-between">
+        <div>
+          <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-4">RESTAURANT IMAGES</h3>
+          <div className="space-y-3">
+            <MockUploadCard
+              label="Restaurant Logo"
+              uploaded={images.logo}
+              onUpload={() => setImages((prev) => ({ ...prev, logo: !prev.logo }))}
+              icon={ImageIcon}
+            />
+            <MockUploadCard
+              label="Cover Photo"
+              uploaded={images.cover}
+              onUpload={() => setImages((prev) => ({ ...prev, cover: !prev.cover }))}
+              icon={ImageIcon}
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-3 mt-4 border-t border-gray-100 dark:border-gray-800">
+          <button
+            type="button"
+            disabled={!isImagesDirty || updatingImages}
+            onClick={handleUpdateImages}
+            className="btn-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5 shadow-sm"
+          >
+            {updatingImages ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Updating...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>Update</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Basic Info */}
-      <div className="card p-5 space-y-4">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">BASIC INFORMATION</h3>
-        <div>
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Restaurant Name</label>
-          <input className="input mt-1" value={data.name} onChange={(e) => update('name', e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Description</label>
-          <textarea className="input mt-1 resize-none" rows={3} value={data.description} onChange={(e) => update('description', e.target.value)} />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {/* 2. Basic Information */}
+      <div className="card p-5 flex flex-col justify-between">
+        <div className="space-y-4">
+          <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">BASIC INFORMATION</h3>
           <div>
-            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Phone</label>
-            <div className="relative mt-1">
-              <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input className="input pl-10" value={data.phone} onChange={(e) => update('phone', e.target.value)} />
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Restaurant Name</label>
+            <input
+              className="input mt-1"
+              value={basic.name}
+              onChange={(e) => setBasic((prev) => ({ ...prev, name: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Description</label>
+            <textarea
+              className="input mt-1 resize-none"
+              rows={3}
+              value={basic.description}
+              onChange={(e) => setBasic((prev) => ({ ...prev, description: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Phone</label>
+              <div className="relative mt-1">
+                <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  className="input pl-10"
+                  value={basic.phone}
+                  onChange={(e) => setBasic((prev) => ({ ...prev, phone: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Email</label>
+              <div className="relative mt-1">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  className="input pl-10"
+                  value={basic.email}
+                  onChange={(e) => setBasic((prev) => ({ ...prev, email: e.target.value }))}
+                />
+              </div>
             </div>
           </div>
+        </div>
+
+        <div className="flex justify-end pt-3 mt-4 border-t border-gray-100 dark:border-gray-800">
+          <button
+            type="button"
+            disabled={!isBasicDirty || updatingBasic}
+            onClick={handleUpdateBasic}
+            className="btn-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5 shadow-sm"
+          >
+            {updatingBasic ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Updating...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>Update</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* 3. Address */}
+      <div className="card p-5 flex flex-col justify-between">
+        <div className="space-y-4">
+          <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">ADDRESS</h3>
           <div>
-            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Email</label>
-            <div className="relative mt-1">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input className="input pl-10" value={data.email} onChange={(e) => update('email', e.target.value)} />
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Address Line 1</label>
+            <input
+              className="input mt-1"
+              value={address.addressLine1}
+              onChange={(e) => setAddress((prev) => ({ ...prev, addressLine1: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Address Line 2</label>
+            <input
+              className="input mt-1"
+              value={address.addressLine2}
+              onChange={(e) => setAddress((prev) => ({ ...prev, addressLine2: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">City</label>
+              <input
+                className="input mt-1"
+                value={address.city}
+                onChange={(e) => setAddress((prev) => ({ ...prev, city: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">State</label>
+              <input
+                className="input mt-1"
+                value={address.state}
+                onChange={(e) => setAddress((prev) => ({ ...prev, state: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Postal Code</label>
+              <input
+                className="input mt-1"
+                value={address.postalCode}
+                onChange={(e) => setAddress((prev) => ({ ...prev, postalCode: e.target.value }))}
+              />
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Address */}
-      <div className="card p-5 space-y-4">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">ADDRESS</h3>
-        <div>
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Address Line 1</label>
-          <input className="input mt-1" value={data.addressLine1} onChange={(e) => update('addressLine1', e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Address Line 2</label>
-          <input className="input mt-1" value={data.addressLine2} onChange={(e) => update('addressLine2', e.target.value)} />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">City</label>
-            <input className="input mt-1" value={data.city} onChange={(e) => update('city', e.target.value)} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">State</label>
-            <input className="input mt-1" value={data.state} onChange={(e) => update('state', e.target.value)} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Postal Code</label>
-            <input className="input mt-1" value={data.postalCode} onChange={(e) => update('postalCode', e.target.value)} />
-          </div>
+        <div className="flex justify-end pt-3 mt-4 border-t border-gray-100 dark:border-gray-800">
+          <button
+            type="button"
+            disabled={!isAddressDirty || updatingAddress}
+            onClick={handleUpdateAddress}
+            className="btn-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5 shadow-sm"
+          >
+            {updatingAddress ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Updating...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>Update</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Rating (read-only) */}
+      {/* 4. Rating (read-only) */}
       <div className="card p-5">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">RATING</h3>
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-2xl font-bold text-gray-900 dark:text-white">{data.rating}</span>
+              <span className="text-2xl font-bold text-gray-900 dark:text-white">{mockRestaurantProfile.rating}</span>
               <div className="flex items-center gap-0.5">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <Star key={i} className={`w-4 h-4 ${i < Math.round(data.rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300 dark:text-gray-700'}`} />
+                  <Star key={i} className={`w-4 h-4 ${i < Math.round(mockRestaurantProfile.rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300 dark:text-gray-700'}`} />
                 ))}
               </div>
             </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+              Customer ratings are calculated automatically and cannot be edited.
+            </p>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center shrink-0">
             <Star className="w-6 h-6 text-amber-500" />
           </div>
         </div>
-      </div>
-
-      <div className="xl:col-span-2">
-        <SaveCancelButtons onSave={onSave} />
       </div>
     </div>
   );
