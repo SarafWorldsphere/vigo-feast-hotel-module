@@ -539,9 +539,9 @@ export const mockOffers: Offer[] = [
 
 // ===== Analytics mock data =====
 
-export type AnalyticsRange = 'today' | 'weekly' | 'monthly';
+export type AnalyticsRange = 'today' | 'weekly' | 'monthly' | 'custom';
 
-export const analyticsData: Record<AnalyticsRange, {
+export interface AnalyticsKpiSummary {
   acceptanceRate: number;
   cancellationRate: number;
   avgOrderValue: number;
@@ -551,42 +551,166 @@ export const analyticsData: Record<AnalyticsRange, {
   avgRating: number;
   totalOrders: number;
   totalRevenue: number;
-}> = {
-  today: { acceptanceRate: 94, cancellationRate: 6, avgOrderValue: 554, avgPrepTime: 24, onTimePrepRate: 87, orderAccuracy: 96, avgRating: 4.4, totalOrders: 87, totalRevenue: 48230 },
-  weekly: { acceptanceRate: 91, cancellationRate: 9, avgOrderValue: 512, avgPrepTime: 26, onTimePrepRate: 84, orderAccuracy: 94, avgRating: 4.3, totalOrders: 612, totalRevenue: 312450 },
-  monthly: { acceptanceRate: 89, cancellationRate: 11, avgOrderValue: 498, avgPrepTime: 28, onTimePrepRate: 82, orderAccuracy: 93, avgRating: 4.2, totalOrders: 2480, totalRevenue: 1248900 },
+  grossSales?: number;
+  netRevenue?: number;
+}
+
+export const analyticsData: Record<AnalyticsRange, AnalyticsKpiSummary> = {
+  today: {
+    acceptanceRate: 94.8,
+    cancellationRate: 3.2,
+    avgOrderValue: 554,
+    avgPrepTime: 21,
+    onTimePrepRate: 92.5,
+    orderAccuracy: 98.4,
+    avgRating: 4.6,
+    totalOrders: 87,
+    totalRevenue: 48230,
+    grossSales: 48230,
+    netRevenue: 43890,
+  },
+  weekly: {
+    acceptanceRate: 93.4,
+    cancellationRate: 4.1,
+    avgOrderValue: 528,
+    avgPrepTime: 23,
+    onTimePrepRate: 90.2,
+    orderAccuracy: 97.6,
+    avgRating: 4.5,
+    totalOrders: 612,
+    totalRevenue: 323136,
+    grossSales: 323136,
+    netRevenue: 294050,
+  },
+  monthly: {
+    acceptanceRate: 91.8,
+    cancellationRate: 5.2,
+    avgOrderValue: 516,
+    avgPrepTime: 24,
+    onTimePrepRate: 88.7,
+    orderAccuracy: 96.8,
+    avgRating: 4.4,
+    totalOrders: 2480,
+    totalRevenue: 1279680,
+    grossSales: 1279680,
+    netRevenue: 1164500,
+  },
+  custom: {
+    acceptanceRate: 92.9,
+    cancellationRate: 4.6,
+    avgOrderValue: 535,
+    avgPrepTime: 22,
+    onTimePrepRate: 91.0,
+    orderAccuracy: 97.2,
+    avgRating: 4.5,
+    totalOrders: 1420,
+    totalRevenue: 759700,
+    grossSales: 759700,
+    netRevenue: 691320,
+  },
 };
 
-export const analyticsSalesTrend: Record<AnalyticsRange, { label: string; orders: number; revenue: number }[]> = {
+export interface AnalyticsTrendPoint {
+  label: string;
+  periodName?: string;
+  orders: number;
+  revenue: number;
+}
+
+export const analyticsSalesTrend: Record<AnalyticsRange, AnalyticsTrendPoint[]> = {
   today: [
-    { label: '9AM', orders: 4, revenue: 1200 }, { label: '10AM', orders: 8, revenue: 2400 }, { label: '11AM', orders: 10, revenue: 3100 }, { label: '12PM', orders: 18, revenue: 5800 }, { label: '1PM', orders: 20, revenue: 6200 }, { label: '2PM', orders: 14, revenue: 4100 }, { label: '3PM', orders: 9, revenue: 2800 }, { label: '4PM', orders: 6, revenue: 1900 }, { label: '5PM', orders: 7, revenue: 2200 }, { label: '6PM', orders: 11, revenue: 3400 }, { label: '7PM', orders: 22, revenue: 6800 }, { label: '8PM', orders: 24, revenue: 7200 }, { label: '9PM', orders: 18, revenue: 5400 }, { label: '10PM', orders: 10, revenue: 3200 },
+    { label: '9 AM', periodName: '9:00 AM - 10:00 AM', orders: 4, revenue: 2200 },
+    { label: '10 AM', periodName: '10:00 AM - 11:00 AM', orders: 7, revenue: 3850 },
+    { label: '11 AM', periodName: '11:00 AM - 12:00 PM', orders: 9, revenue: 4950 },
+    { label: '12 PM', periodName: '12:00 PM - 1:00 PM', orders: 16, revenue: 8960 },
+    { label: '1 PM', periodName: '1:00 PM - 2:00 PM', orders: 18, revenue: 10080 },
+    { label: '2 PM', periodName: '2:00 PM - 3:00 PM', orders: 11, revenue: 6050 },
+    { label: '3 PM', periodName: '3:00 PM - 4:00 PM', orders: 5, revenue: 2750 },
+    { label: '4 PM', periodName: '4:00 PM - 5:00 PM', orders: 4, revenue: 2180 },
+    { label: '5 PM', periodName: '5:00 PM - 6:00 PM', orders: 6, revenue: 3300 },
+    { label: '6 PM', periodName: '6:00 PM - 7:00 PM', orders: 10, revenue: 5600 },
+    { label: '7 PM', periodName: '7:00 PM - 8:00 PM', orders: 19, revenue: 10640 },
+    { label: '8 PM', periodName: '8:00 PM - 9:00 PM', orders: 21, revenue: 11760 },
+    { label: '9 PM', periodName: '9:00 PM - 10:00 PM', orders: 14, revenue: 7700 },
+    { label: '10 PM', periodName: '10:00 PM - 11:00 PM', orders: 8, revenue: 4400 },
   ],
   weekly: [
-    { label: 'Mon', orders: 78, revenue: 42100 }, { label: 'Tue', orders: 85, revenue: 45200 }, { label: 'Wed', orders: 92, revenue: 48900 }, { label: 'Thu', orders: 81, revenue: 43800 }, { label: 'Fri', orders: 105, revenue: 58300 }, { label: 'Sat', orders: 118, revenue: 64100 }, { label: 'Sun', orders: 53, revenue: 9820 },
+    { label: 'Mon', periodName: 'Monday', orders: 76, revenue: 40280 },
+    { label: 'Tue', periodName: 'Tuesday', orders: 82, revenue: 43460 },
+    { label: 'Wed', periodName: 'Wednesday', orders: 89, revenue: 47170 },
+    { label: 'Thu', periodName: 'Thursday', orders: 84, revenue: 44520 },
+    { label: 'Fri', periodName: 'Friday', orders: 108, revenue: 57240 },
+    { label: 'Sat', periodName: 'Saturday', orders: 121, revenue: 64130 },
+    { label: 'Sun', periodName: 'Sunday', orders: 52, revenue: 26336 },
   ],
   monthly: [
-    { label: 'W1', orders: 610, revenue: 312400 }, { label: 'W2', orders: 645, revenue: 335200 }, { label: 'W3', orders: 580, revenue: 298700 }, { label: 'W4', orders: 645, revenue: 302600 },
+    { label: 'Week 1', periodName: 'Week 1 (Days 1-7)', orders: 590, revenue: 304440 },
+    { label: 'Week 2', periodName: 'Week 2 (Days 8-14)', orders: 640, revenue: 330240 },
+    { label: 'Week 3', periodName: 'Week 3 (Days 15-21)', orders: 615, revenue: 317340 },
+    { label: 'Week 4', periodName: 'Week 4 (Days 22-30)', orders: 635, revenue: 327660 },
+  ],
+  custom: [
+    { label: 'Day 1-2', periodName: 'Oct 01 - Oct 02', orders: 168, revenue: 89880 },
+    { label: 'Day 3-4', periodName: 'Oct 03 - Oct 04', orders: 182, revenue: 97370 },
+    { label: 'Day 5-6', periodName: 'Oct 05 - Oct 06', orders: 195, revenue: 104325 },
+    { label: 'Day 7-8', periodName: 'Oct 07 - Oct 08', orders: 174, revenue: 93090 },
+    { label: 'Day 9-10', periodName: 'Oct 09 - Oct 10', orders: 210, revenue: 112350 },
+    { label: 'Day 11-12', periodName: 'Oct 11 - Oct 12', orders: 228, revenue: 121980 },
+    { label: 'Day 13-14', periodName: 'Oct 13 - Oct 14', orders: 165, revenue: 88275 },
+    { label: 'Day 15', periodName: 'Oct 15', orders: 98, revenue: 52430 },
   ],
 };
 
-export const analyticsTopItems = [
-  { name: 'Chicken Biryani', orders: 521, revenue: 166720, image: 'biryani', rating: 4.7 },
-  { name: 'Garlic Naan', orders: 503, revenue: 25150, image: 'naan', rating: 4.5 },
-  { name: 'Cold Coffee', orders: 421, revenue: 54730, image: 'coffee', rating: 4.5 },
-  { name: 'Masala Dosa', orders: 412, revenue: 49440, image: 'dosa', rating: 4.6 },
-  { name: 'Paneer Butter Masala', orders: 342, revenue: 82080, image: 'paneer', rating: 4.5 },
-  { name: 'Chocolate Brownie', orders: 378, revenue: 45360, image: 'brownie', rating: 4.9 },
-  { name: 'Margherita Pizza', orders: 289, revenue: 80920, image: 'pizza', rating: 4.3 },
-  { name: 'Veg Fried Rice', orders: 312, revenue: 59280, image: 'rice', rating: 4.2 },
+export interface AnalyticsItemPerformance {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  orders: number;
+  revenue: number;
+  image: string;
+  rating: number;
+  prepTimeMinutes: number;
+  orderAccuracyRate: number;
+  performanceTag: 'Bestseller' | 'High Margin' | 'Trending' | 'Popular' | 'Steady';
+}
+
+export const analyticsTopItems: AnalyticsItemPerformance[] = [
+  { id: 'm2', name: 'Chicken Biryani', category: 'Main Course', price: 320, orders: 521, revenue: 166720, image: 'biryani', rating: 4.8, prepTimeMinutes: 28, orderAccuracyRate: 99.1, performanceTag: 'Bestseller' },
+  { id: 'm1', name: 'Paneer Butter Masala', category: 'Main Course', price: 240, orders: 342, revenue: 82080, image: 'paneer', rating: 4.6, prepTimeMinutes: 20, orderAccuracyRate: 98.5, performanceTag: 'High Margin' },
+  { id: 'm3', name: 'Margherita Pizza', category: 'Pizza', price: 280, orders: 289, revenue: 80920, image: 'pizza', rating: 4.4, prepTimeMinutes: 25, orderAccuracyRate: 97.8, performanceTag: 'Popular' },
+  { id: 'm6', name: 'Chicken Tikka', category: 'Starters', price: 290, orders: 268, revenue: 77720, image: 'tikka', rating: 4.7, prepTimeMinutes: 22, orderAccuracyRate: 98.9, performanceTag: 'Trending' },
+  { id: 'm16', name: 'Veg Fried Rice', category: 'Chinese', price: 190, orders: 312, revenue: 59280, image: 'rice', rating: 4.3, prepTimeMinutes: 18, orderAccuracyRate: 97.2, performanceTag: 'Steady' },
+  { id: 'm14', name: 'Cold Coffee', category: 'Beverages', price: 130, orders: 421, revenue: 54730, image: 'coffee', rating: 4.6, prepTimeMinutes: 6, orderAccuracyRate: 99.4, performanceTag: 'Popular' },
+  { id: 'm5', name: 'Masala Dosa', category: 'South Indian', price: 120, orders: 412, revenue: 49440, image: 'dosa', rating: 4.7, prepTimeMinutes: 12, orderAccuracyRate: 98.2, performanceTag: 'Popular' },
+  { id: 'm12', name: 'Chocolate Brownie', category: 'Desserts', price: 120, orders: 378, revenue: 45360, image: 'brownie', rating: 4.9, prepTimeMinutes: 8, orderAccuracyRate: 99.8, performanceTag: 'Bestseller' },
+  { id: 'm8', name: 'Pasta Alfredo', category: 'Continental', price: 260, orders: 165, revenue: 42900, image: 'pasta', rating: 4.4, prepTimeMinutes: 20, orderAccuracyRate: 97.5, performanceTag: 'Steady' },
+  { id: 'm9', name: 'Garlic Naan', category: 'Breads', price: 50, orders: 503, revenue: 25150, image: 'naan', rating: 4.6, prepTimeMinutes: 8, orderAccuracyRate: 99.2, performanceTag: 'Steady' },
+  { id: 'm11', name: 'Fish Curry', category: 'Main Course', price: 340, orders: 114, revenue: 38760, image: 'fish', rating: 4.5, prepTimeMinutes: 26, orderAccuracyRate: 97.0, performanceTag: 'High Margin' },
+  { id: 'm4', name: 'Veg Burger', category: 'Fast Food', price: 150, orders: 198, revenue: 29700, image: 'burger', rating: 4.2, prepTimeMinutes: 15, orderAccuracyRate: 96.5, performanceTag: 'Popular' },
+  { id: 'm13', name: 'Gulab Jamun', category: 'Desserts', price: 80, orders: 295, revenue: 23600, image: 'gulab', rating: 4.8, prepTimeMinutes: 5, orderAccuracyRate: 99.5, performanceTag: 'Bestseller' },
+  { id: 'm15', name: 'Fresh Lime Soda', category: 'Beverages', price: 60, orders: 256, revenue: 15360, image: 'lime', rating: 4.4, prepTimeMinutes: 4, orderAccuracyRate: 98.8, performanceTag: 'Steady' },
+  { id: 'm10', name: 'Spring Rolls', category: 'Starters', price: 140, orders: 142, revenue: 19880, image: 'rolls', rating: 4.3, prepTimeMinutes: 15, orderAccuracyRate: 96.9, performanceTag: 'Steady' },
+  { id: 'm7', name: 'Caesar Salad', category: 'Salads', price: 180, orders: 95, revenue: 17100, image: 'salad', rating: 4.1, prepTimeMinutes: 10, orderAccuracyRate: 98.0, performanceTag: 'Steady' },
 ];
 
-export const analyticsCustomerBreakdown = {
-  new: 142,
-  returning: 106,
-  total: 248,
-  newPct: 57,
-  returningPct: 43,
+export interface CustomerBreakdownData {
+  new: number;
+  returning: number;
+  total: number;
+  newPct: number;
+  returningPct: number;
+  returningAovMultiplier: number;
+}
+
+export const analyticsCustomerBreakdownByRange: Record<AnalyticsRange, CustomerBreakdownData> = {
+  today: { new: 51, returning: 36, total: 87, newPct: 59, returningPct: 41, returningAovMultiplier: 1.22 },
+  weekly: { new: 355, returning: 257, total: 612, newPct: 58, returningPct: 42, returningAovMultiplier: 1.25 },
+  monthly: { new: 1414, returning: 1066, total: 2480, newPct: 57, returningPct: 43, returningAovMultiplier: 1.28 },
+  custom: { new: 824, returning: 596, total: 1420, newPct: 58, returningPct: 42, returningAovMultiplier: 1.26 },
 };
+
+export const analyticsCustomerBreakdown = analyticsCustomerBreakdownByRange.today;
 
 // ===== Notifications mock data =====
 

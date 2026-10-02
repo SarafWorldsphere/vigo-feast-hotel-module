@@ -150,13 +150,13 @@ export default function HomePage() {
           {currentPage === 'reviews' && <ReviewsPage />}
           {currentPage === 'settings' && <SettingsPage />}
           {currentPage === 'notifications' && <NotificationsPage />}
-          {currentPage === 'analytics' && <AnalyticsPage />}
+          {currentPage === 'analytics' && <AnalyticsPage key="analytics-page" />}
           {!isEnabled && <ComingSoon page={currentPage} />}
         </main>
       </div>
 
       {/* Bottom nav (mobile) */}
-      <BottomNav />
+      <BottomNav onMoreClick={() => setSidebarOpen(true)} />
 
       {/* Toasts */}
       <ToastContainer />

@@ -119,15 +119,15 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
   );
 }
 
-const bottomNavItems: { id: Page; label: string; icon: typeof LayoutDashboard; enabled: boolean }[] = [
+const bottomNavItems: { id: Page | 'more'; label: string; icon: typeof LayoutDashboard; enabled: boolean }[] = [
   { id: 'dashboard', label: 'Home', icon: LayoutDashboard, enabled: true },
   { id: 'orders', label: 'Orders', icon: ShoppingBag, enabled: true },
   { id: 'menu', label: 'Menu', icon: UtensilsCrossed, enabled: true },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: true },
   { id: 'earnings', label: 'Earnings', icon: Wallet, enabled: true },
-  { id: 'notifications', label: 'More', icon: MoreHorizontal, enabled: true },
 ];
 
-export function BottomNav() {
+export function BottomNav({ onMoreClick }: { onMoreClick?: () => void }) {
   const { currentPage, setPage, newOrderCount } = useApp();
 
   return (
@@ -139,13 +139,19 @@ export function BottomNav() {
         return (
           <button
             key={item.id}
-            onClick={() => item.enabled && setPage(item.id)}
+            onClick={() => {
+              if (item.id === 'more') {
+                onMoreClick?.();
+              } else if (item.enabled) {
+                setPage(item.id);
+              }
+            }}
             disabled={!item.enabled}
             className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-all ${
               isActive
-                ? 'text-brand-600 dark:text-brand-400'
+                ? 'text-brand-600 dark:text-brand-400 font-semibold'
                 : item.enabled
-                ? 'text-gray-400 dark:text-gray-500'
+                ? 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
                 : 'text-gray-300 dark:text-gray-700'
             }`}
           >
