@@ -21,9 +21,18 @@ export function StatusScreenPage() {
   // Automatically navigate directly to dashboard without buttons when verified/approved
   useEffect(() => {
     if (currentStatus === 'APPROVED') {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('nfd_just_received_approval', 'true');
+        try {
+          localStorage.removeItem('nfd_approved_banner_dismissed');
+          if (statusDetails?.restaurant_id) {
+            localStorage.removeItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`);
+          }
+        } catch {}
+      }
       login('APPROVED');
     }
-  }, [currentStatus, login]);
+  }, [currentStatus, login, statusDetails?.restaurant_id]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 px-4 py-8 relative overflow-hidden">
@@ -262,6 +271,15 @@ export function StatusScreenPage() {
                   type="button"
                   onClick={() => {
                     if (st === 'APPROVED') {
+                      if (typeof window !== 'undefined') {
+                        sessionStorage.setItem('nfd_just_received_approval', 'true');
+                        try {
+                          localStorage.removeItem('nfd_approved_banner_dismissed');
+                          if (statusDetails?.restaurant_id) {
+                            localStorage.removeItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`);
+                          }
+                        } catch {}
+                      }
                       login('APPROVED');
                     } else {
                       setRegistrationStatus(st);

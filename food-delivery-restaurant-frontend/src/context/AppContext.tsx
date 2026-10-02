@@ -572,6 +572,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : undefined,
     }));
     if (status === 'APPROVED') {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('nfd_just_received_approval', 'true');
+        try {
+          localStorage.removeItem('nfd_approved_banner_dismissed');
+        } catch {}
+      }
       setIsAuthenticated(true);
       setCurrentPage('dashboard');
     }
@@ -655,6 +661,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const enterDashboard = useCallback(() => {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('nfd_dashboard_entered', 'true');
+      sessionStorage.setItem('nfd_just_received_approval', 'true');
     }
     setIsAuthenticated(true);
     setCurrentPage('dashboard');

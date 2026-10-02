@@ -19,30 +19,75 @@ export function DashboardPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Check if banner was already dismissed forever
+  // Check if banner was already dismissed forever or if the approval is fresh
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const keys = [
-        statusDetails?.restaurant_id ? `nfd_approved_banner_dismissed_${statusDetails.restaurant_id}` : null,
-        owner?.id ? `nfd_approved_banner_dismissed_${owner.id}` : null,
-        owner?.email ? `nfd_approved_banner_dismissed_${owner.email}` : null,
-      ].filter(Boolean) as string[];
+      // 1. Check if the banner was already dismissed forever
+      const isDismissed =
+        localStorage.getItem('nfd_approved_banner_dismissed') === 'true' ||
+        Boolean(
+          statusDetails?.restaurant_id &&
+          localStorage.getItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`) === 'true'
+        ) ||
+        Boolean(
+          owner?.id &&
+          localStorage.getItem(`nfd_approved_banner_dismissed_${owner.id}`) === 'true'
+        ) ||
+        Boolean(
+          owner?.email &&
+          (localStorage.getItem(`nfd_approved_banner_dismissed_${owner.email.toLowerCase()}`) === 'true' ||
+           localStorage.getItem(`nfd_approved_banner_dismissed_${owner.email}`) === 'true')
+        );
 
-      const isDismissed = keys.length > 0
-        ? keys.some((k) => localStorage.getItem(k) === 'true')
-        : localStorage.getItem('nfd_approved_banner_dismissed') === 'true';
+      if (isDismissed) {
+        setShowApprovedBanner(false);
+        return;
+      }
 
-      setShowApprovedBanner(!isDismissed);
-    } catch {
+      // 2. Check if the owner just received approval in this session/flow
+      const justReceived = sessionStorage.getItem('nfd_just_received_approval') === 'true';
+      if (justReceived) {
+        setShowApprovedBanner(true);
+        return;
+      }
+
+      // 3. If reviewed_at or submitted_at exists, verify if it was within the last 48 hours
+      // (If the restaurant was registered & approved a month ago, do not display the banner)
+      const timestamp = statusDetails?.reviewed_at || statusDetails?.submitted_at;
+      if (timestamp) {
+        const approvedTime = new Date(timestamp).getTime();
+        if (!isNaN(approvedTime)) {
+          const diffHours = (Date.now() - approvedTime) / (1000 * 60 * 60);
+          if (diffHours > 48) {
+            setShowApprovedBanner(false);
+            return;
+          }
+        }
+      } else {
+        // If there's no fresh approval trigger and no recent timestamp, do not show by default
+        setShowApprovedBanner(false);
+        return;
+      }
+
       setShowApprovedBanner(true);
+    } catch {
+      setShowApprovedBanner(false);
     }
-  }, [statusDetails?.restaurant_id, owner?.id, owner?.email]);
+  }, [
+    statusDetails?.restaurant_id,
+    statusDetails?.reviewed_at,
+    statusDetails?.submitted_at,
+    owner?.id,
+    owner?.email,
+  ]);
 
   const handleDismissBanner = () => {
     setShowApprovedBanner(false);
     if (typeof window !== 'undefined') {
       try {
+        sessionStorage.removeItem('nfd_just_received_approval');
+        localStorage.setItem('nfd_approved_banner_dismissed', 'true');
         if (statusDetails?.restaurant_id) {
           localStorage.setItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`, 'true');
         }
@@ -50,9 +95,9 @@ export function DashboardPage() {
           localStorage.setItem(`nfd_approved_banner_dismissed_${owner.id}`, 'true');
         }
         if (owner?.email) {
+          localStorage.setItem(`nfd_approved_banner_dismissed_${owner.email.toLowerCase()}`, 'true');
           localStorage.setItem(`nfd_approved_banner_dismissed_${owner.email}`, 'true');
         }
-        localStorage.setItem('nfd_approved_banner_dismissed', 'true');
       } catch {
         // ignore localStorage errors (e.g. private browsing storage limits)
       }
