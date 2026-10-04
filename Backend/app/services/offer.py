@@ -11,6 +11,7 @@ from app.models.offer import Offer, OfferCategory, OfferItem
 from app.models.menu_category import MenuCategory
 from app.models.menu_item import MenuItem
 from app.models.order import Order
+from app.models.restaurant import Restaurant
 
 
 ALLOWED_DISCOUNT_TYPES = {
@@ -165,6 +166,26 @@ def validate_menu_items(
         )
 
 
+def get_owner_restaurant(
+    db: Session,
+    owner_id: UUID,
+) -> Restaurant:
+    restaurant = (
+        db.query(Restaurant)
+        .filter(
+            Restaurant.owner_id == owner_id,
+            Restaurant.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if not restaurant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Restaurant not found for this owner.",
+        )
+    return restaurant
+
+
 def create_offer(
     db: Session,
     restaurant_id: UUID,
@@ -271,9 +292,26 @@ def create_offer(
 
 def get_offers(
     db: Session,
-    restaurant_id: UUID,
+    restaurant_id: Optional[UUID] = None,
+    owner_id: Optional[UUID] = None,
     status_filter: Optional[str] = None,
 ):
+    if not restaurant_id:
+        if owner_id:
+            restaurant = (
+                db.query(Restaurant)
+                .filter(
+                    Restaurant.owner_id == owner_id,
+                    Restaurant.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if not restaurant:
+                return [], {}, {}
+            restaurant_id = restaurant.id
+        else:
+            return [], {}, {}
+
     status_expr = case(
         (func.now() < Offer.valid_from, "SCHEDULED"),
         (func.now() > Offer.valid_to, "EXPIRED"),
@@ -319,15 +357,53 @@ def get_offers(
             status_expr == status_filter
         )
 
-    query = query.order_by(
+    results = query.order_by(
         Offer.offer_id.desc()
-    )
-
-    results = query.all()
+    ).all()
 
     formatted_results = []
     for offer, times_used, discount_given, computed_status in results:
         offer.status = computed_status
         formatted_results.append((offer, times_used, discount_given))
 
-    return formatted_results
+    offer_ids = [offer.offer_id for offer, _, _ in formatted_results]
+
+    category_map = {}
+    item_map = {}
+
+    if offer_ids:
+        category_rows = (
+            db.query(
+                OfferCategory.offer_id,
+                OfferCategory.category_id,
+            )
+            .filter(
+                OfferCategory.offer_id.in_(offer_ids)
+            )
+            .all()
+        )
+
+        item_rows = (
+            db.query(
+                OfferItem.offer_id,
+                OfferItem.menu_item_id,
+            )
+            .filter(
+                OfferItem.offer_id.in_(offer_ids)
+            )
+            .all()
+        )
+
+        for offer_id, category_id in category_rows:
+            category_map.setdefault(
+                offer_id,
+                []
+            ).append(category_id)
+
+        for offer_id, menu_item_id in item_rows:
+            item_map.setdefault(
+                offer_id,
+                []
+            ).append(menu_item_id)
+
+    return formatted_results, category_map, item_map

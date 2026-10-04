@@ -516,6 +516,8 @@ export interface Offer {
   applicableCategories: string[];
   usageCount: number;
   totalDiscountGiven: number;
+  status?: OfferStatus;
+  offerCode?: string | null;
 }
 
 export const offerTypeConfig: Record<OfferType, { label: string; bg: string; text: string }> = {

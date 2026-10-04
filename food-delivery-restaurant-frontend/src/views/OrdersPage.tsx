@@ -138,7 +138,7 @@ function OrderCard({ order, index, onClick, onAction }: {
   order: Order;
   index: number;
   onClick: () => void;
-  onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready' | 'pickup') => void;
+  onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready') => void;
 }) {
   const minsAgo = Math.round((Date.now() - new Date(order.placedAt).getTime()) / 60000);
 

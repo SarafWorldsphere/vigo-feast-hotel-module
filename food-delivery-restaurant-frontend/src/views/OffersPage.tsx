@@ -1,13 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import {
   mockOffers, offerTypeConfig, mockCategories,
-  Offer, OfferType, OfferStatus,
+  Offer, OfferType, OfferStatus, Category, MenuItem,
 } from '@/data/mockData';
+import { apiGetOffers, mapBackendOfferToFrontend } from '@/services/api';
+import { useCreateOffer } from '@/hooks/useOffers';
+export { useCreateOffer } from '@/hooks/useOffers';
+export type { CreateOfferParams, UseCreateOfferReturn } from '@/hooks/useOffers';
 import { PageSkeleton } from '@/components/ui/Skeletons';
 import {
   Plus, Pencil, Pause, Play, Trash2, X, Check, Calendar, Tag, Percent,
-  IndianRupee, TrendingUp, Gift, Clock,
+  IndianRupee, TrendingUp, Gift, Clock, RefreshCw, AlertCircle, Loader2,
 } from 'lucide-react';
 
 type Tab = 'active' | 'scheduled' | 'expired';
@@ -19,7 +23,13 @@ const tabs: { id: Tab; label: string }[] = [
 ];
 
 function getOfferStatus(offer: Offer): OfferStatus {
-  const now = new Date('2026-09-06T15:00:00');
+  if (offer.status) {
+    const s = offer.status.toUpperCase();
+    if (s === 'ACTIVE' || s === 'SCHEDULED' || s === 'EXPIRED') {
+      return s as OfferStatus;
+    }
+  }
+  const now = new Date();
   const start = new Date(offer.startAt);
   const end = new Date(offer.endAt);
   if (now < start) return 'SCHEDULED';
@@ -28,17 +38,58 @@ function getOfferStatus(offer: Offer): OfferStatus {
 }
 
 export function OffersPage() {
-  const { addToast } = useApp();
+  const { categories, menuItems, addToast } = useApp();
+  const { createOffer, isCreating } = useCreateOffer();
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('active');
-  const [offers, setOffers] = useState<Offer[]>(mockOffers);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
 
+  const loadOffers = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      const categoryMap: Record<string, string> = {};
+      categories.forEach((c) => {
+        categoryMap[c.id] = c.name;
+      });
+      const itemMap: Record<string, string> = {};
+      menuItems.forEach((m) => {
+        itemMap[m.id] = m.name;
+      });
+
+      const res = await apiGetOffers();
+      if (res && Array.isArray(res.offers)) {
+        const mapped = res.offers.map((bo) =>
+          mapBackendOfferToFrontend(bo, categoryMap, itemMap)
+        );
+        setOffers(mapped);
+      } else {
+        setOffers([]);
+      }
+    } catch (err: any) {
+      console.error('Failed to load offers from GET /api/v1/offers:', err);
+      const errMsg = err?.message || 'Failed to connect to offers API';
+      setError(errMsg);
+      // If we don't have any offers yet, fall back gracefully to mock data
+      setOffers((prev) => (prev.length > 0 ? prev : mockOffers));
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [categories, menuItems]);
+
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
+    loadOffers();
+  }, [loadOffers]);
 
   if (loading) return <PageSkeleton />;
 
@@ -67,20 +118,54 @@ export function OffersPage() {
     addToast({ type: 'success', title: 'Offer deleted', message: offer?.name ?? '' });
   };
 
-  const handleSave = (offer: Offer) => {
+  const handleSave = async (offerData: Offer) => {
     if (editingOffer) {
-      setOffers((prev) => prev.map((o) => (o.id === offer.id ? offer : o)));
-      addToast({ type: 'success', title: 'Offer updated', message: offer.name });
+      setOffers((prev) => prev.map((o) => (o.id === editingOffer.id ? offerData : o)));
+      addToast({ type: 'success', title: 'Offer updated', message: offerData.name });
+      setEditingOffer(null);
+      setShowCreateModal(false);
     } else {
-      setOffers((prev) => [...prev, offer]);
-      addToast({ type: 'success', title: 'Offer created', message: offer.name });
+      try {
+        const created = await createOffer({
+          name: offerData.name,
+          offerCode: offerData.offerCode,
+          offerType: offerData.offerType,
+          discountValue: offerData.discountValue,
+          maxDiscountAmount: offerData.maxDiscountAmount,
+          minimumOrderAmount: offerData.minimumOrderAmount,
+          startAt: offerData.startAt,
+          endAt: offerData.endAt,
+          applicableCategories: offerData.applicableCategories,
+          applicableItems: offerData.applicableItems,
+        });
+        setOffers((prev) => [created, ...prev]);
+        setEditingOffer(null);
+        setShowCreateModal(false);
+      } catch {
+        // Error toast already triggered inside useCreateOffer hook
+      }
     }
-    setEditingOffer(null);
-    setShowCreateModal(false);
   };
 
   return (
     <div className="animate-fade-in">
+      {/* Error banner if API failed */}
+      {error && (
+        <div className="mb-4 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 flex items-center justify-between gap-3 text-sm">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>Could not refresh from live API: {error}. Showing cached/offline data.</span>
+          </div>
+          <button
+            onClick={() => loadOffers(true)}
+            disabled={isRefreshing}
+            className="btn-secondary text-xs px-2.5 py-1 shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header row */}
       <div className="flex items-center gap-2 mb-4">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 flex-1 scrollbar-thin">
@@ -103,7 +188,21 @@ export function OffersPage() {
             </button>
           ))}
         </div>
-        <button onClick={() => { setEditingOffer(null); setShowCreateModal(true); }} className="btn-primary text-sm shrink-0">
+
+        <button
+          onClick={() => loadOffers(true)}
+          disabled={isRefreshing}
+          className="btn-secondary text-sm shrink-0 flex items-center gap-1.5"
+          title="Refresh offers from server"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
+
+        <button
+          onClick={() => { setEditingOffer(null); setShowCreateModal(true); }}
+          className="btn-primary text-sm shrink-0"
+        >
           <Plus className="w-4 h-4" /> Create Offer
         </button>
       </div>
@@ -112,7 +211,14 @@ export function OffersPage() {
       {filtered.length === 0 ? (
         <div className="card p-12 text-center">
           <Gift className="w-12 h-12 text-gray-300 dark:text-gray-700 mx-auto mb-3" />
-          <p className="text-sm text-gray-400 dark:text-gray-500">No offers in this category</p>
+          <p className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
+            No {tab} offers found
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            {tab === 'active'
+              ? 'Create a new promotional offer or coupon code to boost customer orders.'
+              : `There are currently no offers in the ${tab} state.`}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -133,6 +239,9 @@ export function OffersPage() {
       {showCreateModal && (
         <OfferEditorModal
           offer={editingOffer}
+          categories={categories}
+          menuItems={menuItems}
+          isSubmitting={isCreating}
           onClose={() => { setShowCreateModal(false); setEditingOffer(null); }}
           onSave={handleSave}
         />
@@ -148,12 +257,21 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const typeCfg = offerTypeConfig[offer.offerType];
+  const typeCfg = offerTypeConfig[offer.offerType] || {
+    label: offer.offerType,
+    bg: 'bg-brand-50 dark:bg-brand-500/10',
+    text: 'text-brand-700 dark:text-brand-400',
+  };
   const status = getOfferStatus(offer);
 
   const formatDate = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      return iso;
+    }
   };
 
   return (
@@ -164,21 +282,28 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="min-w-0">
-          <h4 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{offer.name}</h4>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{offer.name}</h4>
+            {offer.offerCode && (
+              <span className="badge px-2 py-0.5 text-[10px] font-mono font-semibold tracking-wider bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-500/20">
+                {offer.offerCode}
+              </span>
+            )}
+          </div>
           <span className={`badge mt-1.5 px-2 py-0.5 text-[10px] ${typeCfg.bg} ${typeCfg.text}`}>
             {typeCfg.label}
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={onEdit} className="btn-ghost p-1.5 text-gray-400 hover:text-brand-500">
+          <button onClick={onEdit} className="btn-ghost p-1.5 text-gray-400 hover:text-brand-500" title="Edit offer">
             <Pencil className="w-3.5 h-3.5" />
           </button>
           {status === 'ACTIVE' && (
-            <button onClick={onToggle} className="btn-ghost p-1.5 text-gray-400 hover:text-amber-500">
+            <button onClick={onToggle} className="btn-ghost p-1.5 text-gray-400 hover:text-amber-500" title={offer.isActive ? "Pause offer" : "Activate offer"}>
               {offer.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
           )}
-          <button onClick={onDelete} className="btn-ghost p-1.5 text-gray-400 hover:text-red-500">
+          <button onClick={onDelete} className="btn-ghost p-1.5 text-gray-400 hover:text-red-500" title="Delete offer">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -213,7 +338,7 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
       {/* Applicable items/categories */}
       {(offer.applicableItems.length > 0 || offer.applicableCategories.length > 0) && (
         <div className="flex items-center gap-1 flex-wrap mb-3">
-          <Tag className="w-3 h-3 text-gray-400" />
+          <Tag className="w-3 h-3 text-gray-400 shrink-0" />
           {offer.applicableItems.map((item) => (
             <span key={item} className="badge px-1.5 py-0.5 text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
               {item}
@@ -279,19 +404,30 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
   );
 }
 
-function OfferEditorModal({ offer, onClose, onSave }: {
+function OfferEditorModal({
+  offer,
+  categories,
+  menuItems,
+  isSubmitting = false,
+  onClose,
+  onSave,
+}: {
   offer: Offer | null;
+  categories: Category[];
+  menuItems: MenuItem[];
+  isSubmitting?: boolean;
   onClose: () => void;
   onSave: (offer: Offer) => void;
 }) {
   const isEdit = !!offer;
   const [name, setName] = useState(offer?.name ?? '');
+  const [offerCode, setOfferCode] = useState(offer?.offerCode ?? '');
   const [offerType, setOfferType] = useState<OfferType>(offer?.offerType ?? 'PERCENTAGE');
   const [discountValue, setDiscountValue] = useState(offer?.discountValue ?? 10);
   const [maxDiscount, setMaxDiscount] = useState(offer?.maxDiscountAmount ?? 0);
   const [minOrder, setMinOrder] = useState(offer?.minimumOrderAmount ?? 0);
-  const [startAt, setStartAt] = useState(offer?.startAt.slice(0, 16) ?? '2026-09-07T00:00');
-  const [endAt, setEndAt] = useState(offer?.endAt.slice(0, 16) ?? '2026-09-14T23:59');
+  const [startAt, setStartAt] = useState(offer?.startAt ? offer.startAt.slice(0, 16) : '2026-10-01T00:00');
+  const [endAt, setEndAt] = useState(offer?.endAt ? offer.endAt.slice(0, 16) : '2026-10-31T23:59');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(offer?.applicableCategories ?? []);
   const [selectedItems, setSelectedItems] = useState<string[]>(offer?.applicableItems ?? []);
 
@@ -303,6 +439,11 @@ function OfferEditorModal({ offer, onClose, onSave }: {
     { value: 'COMBO', label: 'Combo' },
     { value: 'BUY_X_GET_Y', label: 'Buy X Get Y' },
   ];
+
+  const availableCategories = categories.length > 0 ? categories : mockCategories;
+  const availableItems = menuItems.length > 0
+    ? menuItems.map((m) => m.name)
+    : ['Chicken Biryani', 'Margherita Pizza', 'Paneer Butter Masala', 'Masala Dosa', 'Chocolate Brownie', 'Cold Coffee'];
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) => prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]);
@@ -317,6 +458,7 @@ function OfferEditorModal({ offer, onClose, onSave }: {
     onSave({
       id: offer?.id ?? `o-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name: name.trim(),
+      offerCode: offerCode.trim() ? offerCode.trim().toUpperCase() : undefined,
       offerType,
       discountValue,
       maxDiscountAmount: maxDiscount,
@@ -350,16 +492,22 @@ function OfferEditorModal({ offer, onClose, onSave }: {
           </div>
 
           <div>
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Promo Code (Optional)</label>
+            <input className="input mt-1 uppercase" value={offerCode} onChange={(e) => setOfferCode(e.target.value)} placeholder="e.g. FEAST20" />
+          </div>
+
+          <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Offer Type</label>
             <div className="grid grid-cols-3 gap-2 mt-1">
               {offerTypes.map((t) => (
                 <button
                   key={t.value}
+                  type="button"
                   onClick={() => setOfferType(t.value)}
                   className={`px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     offerType === t.value
                       ? 'bg-brand-500 text-white'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                   }`}
                 >
                   {t.label}
@@ -401,9 +549,10 @@ function OfferEditorModal({ offer, onClose, onSave }: {
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Applicable Categories</label>
             <div className="flex flex-wrap gap-2 mt-2">
-              {mockCategories.map((cat) => (
+              {availableCategories.map((cat) => (
                 <button
                   key={cat.id}
+                  type="button"
                   onClick={() => toggleCategory(cat.name)}
                   className={`badge px-3 py-1.5 text-xs transition-all ${
                     selectedCategories.includes(cat.name)
@@ -420,10 +569,11 @@ function OfferEditorModal({ offer, onClose, onSave }: {
           {/* Applicable items */}
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Applicable Items</label>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {['Chicken Biryani', 'Margherita Pizza', 'Paneer Butter Masala', 'Masala Dosa', 'Chocolate Brownie', 'Cold Coffee'].map((item) => (
+            <div className="flex flex-wrap gap-2 mt-2 max-h-36 overflow-y-auto">
+              {availableItems.map((item) => (
                 <button
                   key={item}
+                  type="button"
                   onClick={() => toggleItem(item)}
                   className={`badge px-3 py-1.5 text-xs transition-all ${
                     selectedItems.includes(item)
@@ -440,9 +590,26 @@ function OfferEditorModal({ offer, onClose, onSave }: {
 
         {/* Footer */}
         <div className="flex gap-2 p-4 border-t border-gray-200 dark:border-gray-800 sticky bottom-0 bg-white dark:bg-gray-900">
-          <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={!name.trim()} className="btn-primary flex-1">
-            <Check className="w-4 h-4" /> {isEdit ? 'Save Changes' : 'Create Offer'}
+          <button type="button" onClick={onClose} disabled={isSubmitting} className="btn-secondary flex-1">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!name.trim() || isSubmitting}
+            className="btn-primary flex-1 flex items-center justify-center gap-2"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Creating Offer...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                <span>{isEdit ? 'Save Changes' : 'Create Offer'}</span>
+              </>
+            )}
           </button>
         </div>
       </div>

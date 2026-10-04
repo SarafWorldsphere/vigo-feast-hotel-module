@@ -1,6 +1,6 @@
 // Real API client connecting to FastAPI backend
 
-import type { Order, OrderStatus } from '@/data/mockData';
+import type { Order, OrderStatus, Offer, OfferType, OfferStatus } from '@/data/mockData';
 import type { Delivery, DeliveryStage, DeliveryPartner } from '@/types/delivery';
 
 export const API_BASE_URL =
@@ -755,3 +755,109 @@ export async function apiGetDelivery(orderId: string | number): Promise<BackendD
     method: 'GET',
   });
 }
+
+// ===== Offers API =====
+
+export interface BackendOffer {
+  offer_id: number;
+  offer_code: string | null;
+  offer_name: string;
+  discount_type: string;
+  discount_value: number | string;
+  min_order_amount: number | string;
+  max_discount_amount: number | string | null;
+  valid_from: string;
+  valid_to: string;
+  status: string;
+  is_active: boolean;
+  category_ids: string[];
+  menu_item_ids: string[];
+  times_used: number;
+  discount_given: number | string;
+}
+
+export interface BackendOfferListResponse {
+  offers: BackendOffer[];
+  total: number;
+}
+
+export function mapBackendOfferToFrontend(
+  bo: BackendOffer,
+  categoryNameMap?: Record<string, string>,
+  itemNameMap?: Record<string, string>
+): Offer {
+  const rawType = (bo.discount_type || '').toUpperCase();
+  const validTypes: OfferType[] = ['PERCENTAGE', 'FLAT', 'MIN_ORDER', 'ITEM', 'COMBO', 'BUY_X_GET_Y'];
+  const offerType: OfferType = validTypes.includes(rawType as OfferType)
+    ? (rawType as OfferType)
+    : 'PERCENTAGE';
+
+  const rawStatus = (bo.status || '').toUpperCase();
+  const validStatuses: OfferStatus[] = ['ACTIVE', 'SCHEDULED', 'EXPIRED'];
+  const status: OfferStatus | undefined = validStatuses.includes(rawStatus as OfferStatus)
+    ? (rawStatus as OfferStatus)
+    : undefined;
+
+  return {
+    id: String(bo.offer_id),
+    name: bo.offer_name,
+    offerType,
+    discountValue: Number(bo.discount_value) || 0,
+    maxDiscountAmount: bo.max_discount_amount != null ? Number(bo.max_discount_amount) : 0,
+    minimumOrderAmount: Number(bo.min_order_amount) || 0,
+    startAt: bo.valid_from,
+    endAt: bo.valid_to,
+    isActive: Boolean(bo.is_active),
+    applicableCategories: Array.isArray(bo.category_ids)
+      ? bo.category_ids.map((id) => (categoryNameMap && categoryNameMap[String(id)]) || String(id))
+      : [],
+    applicableItems: Array.isArray(bo.menu_item_ids)
+      ? bo.menu_item_ids.map((id) => (itemNameMap && itemNameMap[String(id)]) || String(id))
+      : [],
+    usageCount: bo.times_used ?? 0,
+    totalDiscountGiven: Number(bo.discount_given) || 0,
+    status,
+    offerCode: bo.offer_code || undefined,
+  };
+}
+
+/**
+ * GET /api/v1/offers
+ * Fetches all offers for the restaurant, optionally filtered by status ('ACTIVE' | 'SCHEDULED' | 'EXPIRED')
+ */
+export async function apiGetOffers(statusFilter?: string): Promise<BackendOfferListResponse> {
+  const params = new URLSearchParams();
+  if (statusFilter) {
+    params.append('status', statusFilter.toUpperCase());
+  }
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request<BackendOfferListResponse>(`/api/v1/offers${query}`, {
+    method: 'GET',
+  });
+}
+
+export interface CreateOfferPayload {
+  offer_code?: string | null;
+  offer_name: string;
+  discount_type: string;
+  discount_value: number;
+  min_order_amount?: number;
+  max_discount_amount?: number | null;
+  valid_from: string;
+  valid_to: string;
+  category_ids?: string[];
+  menu_item_ids?: string[];
+}
+
+/**
+ * POST /api/v1/offers
+ * Creates a new offer for the restaurant
+ */
+export async function apiCreateOffer(payload: CreateOfferPayload): Promise<BackendOffer> {
+  return request<BackendOffer>('/api/v1/offers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+

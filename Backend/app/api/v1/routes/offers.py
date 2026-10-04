@@ -31,47 +31,11 @@ def list_offers(
     db: Session = Depends(get_db),
     current_owner: RestaurantOwner = Depends(get_current_owner),
 ):
-    # Resolve restaurant_id from authenticated owner
-    restaurant_id = getattr(current_owner, "restaurant_id", None)
-    if not restaurant_id:
-        restaurant = (
-            db.query(Restaurant)
-            .filter(
-                Restaurant.owner_id == current_owner.id,
-                Restaurant.is_deleted.is_(False),
-            )
-            .first()
-        )
-        if not restaurant:
-            return OfferListResponse(offers=[], total=0)
-        restaurant_id = restaurant.id
-
-    results = get_offers(
+    results, category_map, item_map = get_offers(
         db=db,
-        restaurant_id=restaurant_id,
+        owner_id=current_owner.id,
         status_filter=status_filter,
     )
-
-    offer_ids = [offer.offer_id for offer, _, _ in results]
-    category_map = {}
-    item_map = {}
-
-    if offer_ids:
-        categories = (
-            db.query(OfferCategory)
-            .filter(OfferCategory.offer_id.in_(offer_ids))
-            .all()
-        )
-        for cat in categories:
-            category_map.setdefault(cat.offer_id, []).append(cat.category_id)
-
-        items = (
-            db.query(OfferItem)
-            .filter(OfferItem.offer_id.in_(offer_ids))
-            .all()
-        )
-        for it in items:
-            item_map.setdefault(it.offer_id, []).append(it.menu_item_id)
 
     offers = []
 
@@ -89,8 +53,14 @@ def list_offers(
                 valid_to=offer.valid_to,
                 status=offer.status,
                 is_active=offer.is_active,
-                category_ids=category_map.get(offer.offer_id, []),
-                menu_item_ids=item_map.get(offer.offer_id, []),
+                category_ids=category_map.get(
+                    offer.offer_id,
+                    [],
+                ),
+                menu_item_ids=item_map.get(
+                    offer.offer_id,
+                    [],
+                ),
                 times_used=times_used,
                 discount_given=discount_given,
             )
