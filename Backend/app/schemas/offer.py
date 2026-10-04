@@ -61,6 +61,12 @@ class UpdateOfferRequest(BaseModel):
         max_length=150,
     )
 
+    discount_type: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+    )
+
     discount_value: Optional[Decimal] = Field(
         default=None,
         gt=0,

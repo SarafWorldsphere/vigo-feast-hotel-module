@@ -10,7 +10,7 @@ from app.models.offer import OfferCategory, OfferItem
 from app.models.restaurant import Restaurant
 from app.models.restaurant_owner import RestaurantOwner
 from app.schemas.offer import OfferListResponse, OfferResponse
-from app.services.offer import get_offers
+from app.services.offer import calculate_offer_status, get_offers
 
 
 router = APIRouter(
@@ -51,7 +51,10 @@ def list_offers(
                 max_discount_amount=offer.max_discount_amount,
                 valid_from=offer.valid_from,
                 valid_to=offer.valid_to,
-                status=offer.status,
+                status=calculate_offer_status(
+                    offer.valid_from,
+                    offer.valid_to,
+                ),
                 is_active=offer.is_active,
                 category_ids=category_map.get(
                     offer.offer_id,

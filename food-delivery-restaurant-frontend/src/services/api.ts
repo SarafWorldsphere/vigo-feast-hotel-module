@@ -231,6 +231,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}, isRetry =
     throw new Error(errorMsg);
   }
 
+  if (response.status === 204 || response.headers.get('content-length') === '0') {
+    return {} as T;
+  }
+
   return response.json();
 }
 
@@ -859,5 +863,63 @@ export async function apiCreateOffer(payload: CreateOfferPayload): Promise<Backe
     body: JSON.stringify(payload),
   });
 }
+
+export interface UpdateOfferPayload {
+  offer_code?: string | null;
+  offer_name?: string;
+  discount_type?: string;
+  discount_value?: number;
+  min_order_amount?: number;
+  max_discount_amount?: number | null;
+  valid_from?: string;
+  valid_to?: string;
+  category_ids?: string[];
+  menu_item_ids?: string[];
+}
+
+/**
+ * PATCH /api/v1/offers/{offer_id}
+ * Updates an existing offer for the restaurant
+ */
+export async function apiUpdateOffer(
+  offerId: string | number,
+  payload: UpdateOfferPayload
+): Promise<BackendOffer> {
+  return request<BackendOffer>(`/api/v1/offers/${offerId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface ToggleOfferPayload {
+  is_active: boolean;
+}
+
+/**
+ * PATCH /api/v1/offers/{offer_id}/toggle
+ * Toggles an existing offer's active status
+ */
+export async function apiToggleOffer(
+  offerId: string | number,
+  isActive: boolean
+): Promise<BackendOffer> {
+  return request<BackendOffer>(`/api/v1/offers/${offerId}/toggle`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+/**
+ * DELETE /api/v1/offers/{offer_id}
+ * Soft deletes an existing offer for the restaurant
+ */
+export async function apiDeleteOffer(offerId: string | number): Promise<void> {
+  await request<void>(`/api/v1/offers/${offerId}`, {
+    method: 'DELETE',
+  });
+}
+
+
+
 
 

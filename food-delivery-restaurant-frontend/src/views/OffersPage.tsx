@@ -5,12 +5,19 @@ import {
   Offer, OfferType, OfferStatus, Category, MenuItem,
 } from '@/data/mockData';
 import { apiGetOffers, mapBackendOfferToFrontend } from '@/services/api';
-import { useCreateOffer } from '@/hooks/useOffers';
-export { useCreateOffer } from '@/hooks/useOffers';
-export type { CreateOfferParams, UseCreateOfferReturn } from '@/hooks/useOffers';
+import { useCreateOffer, useUpdateOffer, useToggleOffer, useDeleteOffer } from '@/hooks/useOffers';
+export { useCreateOffer, useUpdateOffer, useToggleOffer, useDeleteOffer } from '@/hooks/useOffers';
+export type {
+  CreateOfferParams,
+  UseCreateOfferReturn,
+  UpdateOfferParams,
+  UseUpdateOfferReturn,
+  UseToggleOfferReturn,
+  UseDeleteOfferReturn,
+} from '@/hooks/useOffers';
 import { PageSkeleton } from '@/components/ui/Skeletons';
 import {
-  Plus, Pencil, Pause, Play, Trash2, X, Check, Calendar, Tag, Percent,
+  Plus, Pencil, Trash2, X, Check, Calendar, Tag, Percent,
   IndianRupee, TrendingUp, Gift, Clock, RefreshCw, AlertCircle, Loader2,
 } from 'lucide-react';
 
@@ -40,6 +47,9 @@ function getOfferStatus(offer: Offer): OfferStatus {
 export function OffersPage() {
   const { categories, menuItems, addToast } = useApp();
   const { createOffer, isCreating } = useCreateOffer();
+  const { updateOffer, isUpdating } = useUpdateOffer();
+  const { toggleOffer, isToggling, togglingId } = useToggleOffer();
+  const { deleteOffer, isDeleting, deletingId } = useDeleteOffer();
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,24 +116,63 @@ export function OffersPage() {
     expired: offers.filter((o) => getOfferStatus(o) === 'EXPIRED').length,
   };
 
-  const handleToggle = (id: string) => {
-    setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, isActive: !o.isActive } : o)));
+  const handleToggle = async (id: string) => {
     const offer = offers.find((o) => o.id === id);
-    addToast({ type: 'info', title: offer?.isActive ? 'Offer paused' : 'Offer activated', message: offer?.name ?? '' });
+    if (!offer) return;
+    const nextActiveState = !offer.isActive;
+
+    // Optimistically update UI
+    setOffers((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, isActive: nextActiveState } : o))
+    );
+
+    try {
+      await toggleOffer(id, nextActiveState);
+    } catch {
+      // Revert if API call fails
+      setOffers((prev) =>
+        prev.map((o) => (o.id === id ? { ...o, isActive: !nextActiveState } : o))
+      );
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const offer = offers.find((o) => o.id === id);
+    if (!offer) return;
+
+    // Optimistically remove from UI
     setOffers((prev) => prev.filter((o) => o.id !== id));
-    addToast({ type: 'success', title: 'Offer deleted', message: offer?.name ?? '' });
+
+    try {
+      await deleteOffer(id);
+    } catch {
+      // Revert if API call fails
+      setOffers((prev) => [offer, ...prev]);
+    }
   };
 
   const handleSave = async (offerData: Offer) => {
     if (editingOffer) {
-      setOffers((prev) => prev.map((o) => (o.id === editingOffer.id ? offerData : o)));
-      addToast({ type: 'success', title: 'Offer updated', message: offerData.name });
-      setEditingOffer(null);
-      setShowCreateModal(false);
+      try {
+        const updated = await updateOffer({
+          id: editingOffer.id,
+          name: offerData.name,
+          offerCode: offerData.offerCode,
+          offerType: offerData.offerType,
+          discountValue: offerData.discountValue,
+          maxDiscountAmount: offerData.maxDiscountAmount,
+          minimumOrderAmount: offerData.minimumOrderAmount,
+          startAt: offerData.startAt,
+          endAt: offerData.endAt,
+          applicableCategories: offerData.applicableCategories,
+          applicableItems: offerData.applicableItems,
+        });
+        setOffers((prev) => prev.map((o) => (o.id === editingOffer.id ? updated : o)));
+        setEditingOffer(null);
+        setShowCreateModal(false);
+      } catch {
+        // Error toast already triggered inside useUpdateOffer hook
+      }
     } else {
       try {
         const created = await createOffer({
@@ -227,6 +276,8 @@ export function OffersPage() {
               key={offer.id}
               offer={offer}
               index={i}
+              isToggling={togglingId === offer.id}
+              isDeleting={deletingId === offer.id}
               onToggle={() => handleToggle(offer.id)}
               onEdit={() => { setEditingOffer(offer); setShowCreateModal(true); }}
               onDelete={() => handleDelete(offer.id)}
@@ -241,7 +292,7 @@ export function OffersPage() {
           offer={editingOffer}
           categories={categories}
           menuItems={menuItems}
-          isSubmitting={isCreating}
+          isSubmitting={isCreating || isUpdating}
           onClose={() => { setShowCreateModal(false); setEditingOffer(null); }}
           onSave={handleSave}
         />
@@ -250,9 +301,11 @@ export function OffersPage() {
   );
 }
 
-function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
+function OfferCard({ offer, index, isToggling = false, isDeleting = false, onToggle, onEdit, onDelete }: {
   offer: Offer;
   index: number;
+  isToggling?: boolean;
+  isDeleting?: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -298,13 +351,13 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
           <button onClick={onEdit} className="btn-ghost p-1.5 text-gray-400 hover:text-brand-500" title="Edit offer">
             <Pencil className="w-3.5 h-3.5" />
           </button>
-          {status === 'ACTIVE' && (
-            <button onClick={onToggle} className="btn-ghost p-1.5 text-gray-400 hover:text-amber-500" title={offer.isActive ? "Pause offer" : "Activate offer"}>
-              {offer.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            </button>
-          )}
-          <button onClick={onDelete} className="btn-ghost p-1.5 text-gray-400 hover:text-red-500" title="Delete offer">
-            <Trash2 className="w-3.5 h-3.5" />
+          <button
+            onClick={onDelete}
+            disabled={isDeleting}
+            className="btn-ghost p-1.5 text-gray-400 hover:text-red-500 disabled:opacity-50"
+            title="Delete offer"
+          >
+            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <Trash2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
@@ -382,7 +435,8 @@ function OfferCard({ offer, index, onToggle, onEdit, onDelete }: {
           </span>
           <button
             onClick={onToggle}
-            className={`relative w-11 h-6 rounded-full transition-colors ${offer.isActive ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700'}`}
+            disabled={isToggling}
+            className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${offer.isActive ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700'}`}
           >
             <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${offer.isActive ? 'translate-x-5' : ''}`} />
           </button>
@@ -602,7 +656,7 @@ function OfferEditorModal({
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Creating Offer...</span>
+                <span>{isEdit ? 'Saving Changes...' : 'Creating Offer...'}</span>
               </>
             ) : (
               <>
