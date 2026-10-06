@@ -8,6 +8,9 @@ from app.api.v1.routes.order import router as order_router
 from app.api.v1.routes.registration import router as registration_router
 from app.api.v1.routes.websocket import router as websocket_router
 from app.api.v1.offers import router as offers_router
+from app.routers.feedback import router as feedback_router
+from app.api.v1.routes.restaurant import router as restaurant_router
+from app.api.v1.routes.owner import router as owner_router
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -85,6 +88,30 @@ app.include_router(
     offers_router,
     prefix="/api/v1",
 )
+
+app.include_router(
+    feedback_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    restaurant_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    restaurant_router,
+)
+
+app.include_router(
+    owner_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    owner_router,
+)
+
 
 
 

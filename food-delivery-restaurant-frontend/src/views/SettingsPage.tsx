@@ -4,6 +4,66 @@ import {
   mockRestaurantProfile, mockRestaurantOwner, operatingHours as defaultHours,
   RestaurantProfile, RestaurantOwner,
 } from '@/data/mockData';
+import {
+  apiGetRestaurantProfile,
+  apiUpdateRestaurantProfile,
+  apiGetRestaurantAddress,
+  RestaurantAddressUpdatePayload,
+  RestaurantProfileResponse,
+} from '@/services/api';
+
+import {
+  useUpdateRestaurantAddress,
+  useRestaurantAddress,
+} from '@/hooks/useRestaurantAddress';
+export {
+  useUpdateRestaurantAddress,
+  useRestaurantAddress,
+} from '@/hooks/useRestaurantAddress';
+export type {
+  UpdateRestaurantAddressParams,
+  UseUpdateRestaurantAddressReturn,
+  UseRestaurantAddressReturn,
+} from '@/hooks/useRestaurantAddress';
+import {
+  useRestaurantProfile,
+  useGetRestaurantProfile,
+} from '@/hooks/useRestaurantProfile';
+export {
+  useRestaurantProfile,
+  useGetRestaurantProfile,
+} from '@/hooks/useRestaurantProfile';
+export type {
+  UseRestaurantProfileReturn,
+  UseRestaurantProfileOptions,
+} from '@/hooks/useRestaurantProfile';
+
+import {
+  useOwnerProfile,
+  useGetOwnerProfile,
+  useUpdateOwnerProfile,
+} from '@/hooks/useOwnerProfile';
+import type {
+  OwnerProfileResponse,
+  OwnerProfileUpdatePayload,
+  UseOwnerProfileReturn,
+  UseOwnerProfileOptions,
+  UseUpdateOwnerProfileReturn,
+} from '@/hooks/useOwnerProfile';
+export {
+  useOwnerProfile,
+  useGetOwnerProfile,
+  useUpdateOwnerProfile,
+};
+export type {
+  UseOwnerProfileReturn,
+  UseOwnerProfileOptions,
+  UseUpdateOwnerProfileReturn,
+  OwnerProfileResponse,
+  OwnerProfileUpdatePayload,
+} from '@/hooks/useOwnerProfile';
+
+
 import { PageSkeleton } from '@/components/ui/Skeletons';
 import {
   Store, Clock, Wifi, User, Wallet, Check, X, Star, UploadCloud, Image as ImageIcon,
@@ -22,13 +82,28 @@ const tabs: { id: Tab; label: string; icon: typeof Store }[] = [
 
 export function SettingsPage() {
   const { addToast } = useApp();
+  const {
+    profile,
+    isLoading: isProfileLoading,
+    refetch: refetchProfile,
+  } = useRestaurantProfile();
+  const {
+    ownerProfile,
+    isLoading: isOwnerLoading,
+    isUpdating: isOwnerUpdating,
+    updateOwnerProfile,
+    refetch: refetchOwnerProfile,
+  } = useOwnerProfile();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('profile');
 
   useEffect(() => {
+    if (!isProfileLoading && !isOwnerLoading) {
+      setLoading(false);
+    }
     const t = setTimeout(() => setLoading(false), 500);
     return () => clearTimeout(t);
-  }, []);
+  }, [isProfileLoading, isOwnerLoading]);
 
   if (loading) return <PageSkeleton />;
 
@@ -56,18 +131,59 @@ export function SettingsPage() {
       </div>
 
       <div className="w-full">
-        {activeTab === 'profile' && <ProfileTab />}
-        {activeTab === 'hours' && <HoursTab onSave={() => addToast({ type: 'success', title: 'Hours saved', message: 'Operating hours updated' })} />}
+        {activeTab === 'profile' && (
+          <ProfileTab profile={profile} refetchProfile={refetchProfile} />
+        )}
+        {activeTab === 'hours' && (
+          <HoursTab
+            onSave={() =>
+              addToast({
+                type: 'success',
+                title: 'Hours saved',
+                message: 'Operating hours updated',
+              })
+            }
+          />
+        )}
         {activeTab === 'status' && <StatusTab />}
-        {activeTab === 'account' && <AccountTab onSave={() => addToast({ type: 'success', title: 'Account saved', message: 'Account details updated' })} />}
-        {activeTab === 'payouts' && <PayoutsTab onSave={() => addToast({ type: 'success', title: 'Payout details saved', message: 'Bank details updated' })} />}
+        {activeTab === 'account' && (
+          <AccountTab
+            ownerProfile={ownerProfile}
+            isLoading={isOwnerLoading}
+            isUpdating={isOwnerUpdating}
+            onUpdate={updateOwnerProfile}
+          />
+        )}
+        {activeTab === 'payouts' && (
+          <PayoutsTab
+            onSave={() =>
+              addToast({
+                type: 'success',
+                title: 'Payout details saved',
+                message: 'Bank details updated',
+              })
+            }
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function ProfileTab() {
+interface ProfileTabProps {
+  profile?: RestaurantProfileResponse | null;
+  refetchProfile?: () => void;
+}
+
+function ProfileTab({
+  profile: propProfile,
+  refetchProfile: propRefetch,
+}: ProfileTabProps = {}) {
   const { addToast } = useApp();
+  const profileHook = useRestaurantProfile({ autoFetch: propProfile === undefined });
+  const profile = propProfile !== undefined ? propProfile : profileHook.profile;
+  const refetchProfile = propRefetch || profileHook.refetch;
+
 
   // Images state
   const [savedImages, setSavedImages] = useState({ logo: false, cover: false });
@@ -104,7 +220,7 @@ function ProfileTab() {
     state: mockRestaurantProfile.state,
     postalCode: mockRestaurantProfile.postalCode,
   });
-  const [updatingAddress, setUpdatingAddress] = useState(false);
+  const { updateAddress, isUpdating: updatingAddress } = useUpdateRestaurantAddress();
 
   // Scoped dirty state checks
   const isImagesDirty =
@@ -124,6 +240,56 @@ function ProfileTab() {
     address.state !== savedAddress.state ||
     address.postalCode !== savedAddress.postalCode;
 
+  // Rating state
+  const [currentRating, setCurrentRating] = useState({
+    average: mockRestaurantProfile.rating,
+    totalReviews: 0,
+  });
+
+  // Sync state whenever profile from hook loads or updates
+  useEffect(() => {
+    if (!profile) return;
+    const initial = {
+      name: profile.name || '',
+      description: profile.description || '',
+      phone: profile.phone || '',
+      email: profile.email || '',
+    };
+    setSavedBasic(initial);
+    setBasic(initial);
+
+    if (profile.images) {
+      const imgState = {
+        logo: Boolean(profile.images.logo_url),
+        cover: Boolean(profile.images.cover_image_url),
+      };
+      setSavedImages(imgState);
+      setImages(imgState);
+    }
+
+    if (profile.address) {
+      const initialAddr = {
+        addressLine1: profile.address.address_line1 || '',
+        addressLine2: profile.address.address_line2 || '',
+        city: profile.address.city || '',
+        state: profile.address.state || '',
+        postalCode: profile.address.postal_code || '',
+      };
+      setSavedAddress(initialAddr);
+      setAddress(initialAddr);
+    }
+
+    if (profile.rating) {
+      const avg = typeof profile.rating === 'object' ? profile.rating.average : profile.rating;
+      const total = typeof profile.rating === 'object' ? profile.rating.total_reviews : 0;
+      if (avg !== undefined && avg !== null) {
+        mockRestaurantProfile.rating = avg;
+        setCurrentRating({ average: avg, totalReviews: total });
+      }
+    }
+  }, [profile]);
+
+
   // Handlers
   const handleUpdateImages = () => {
     if (!isImagesDirty || updatingImages) return;
@@ -139,32 +305,137 @@ function ProfileTab() {
     }, 500);
   };
 
-  const handleUpdateBasic = () => {
+  const handleUpdateBasic = async () => {
     if (!isBasicDirty || updatingBasic) return;
     setUpdatingBasic(true);
-    setTimeout(() => {
-      setSavedBasic({ ...basic });
-      setUpdatingBasic(false);
+
+    try {
+      // Build partial payload containing only the modified fields
+      const payload: {
+        name?: string;
+        description?: string;
+        phone?: string;
+        email?: string;
+      } = {};
+
+      if (basic.name !== savedBasic.name) {
+        payload.name = basic.name.trim();
+      }
+      if (basic.description !== savedBasic.description) {
+        payload.description = basic.description;
+      }
+      if (basic.phone !== savedBasic.phone) {
+        payload.phone = basic.phone.trim();
+      }
+      if (basic.email !== savedBasic.email) {
+        const trimmedEmail = basic.email.trim();
+        if (trimmedEmail) {
+          payload.email = trimmedEmail;
+        }
+      }
+
+      // If no scoped difference found, fallback to populated basic info
+      const requestPayload =
+        Object.keys(payload).length > 0
+          ? payload
+          : {
+              ...(basic.name ? { name: basic.name.trim() } : {}),
+              ...(basic.description ? { description: basic.description } : {}),
+              ...(basic.phone ? { phone: basic.phone.trim() } : {}),
+              ...(basic.email?.trim() ? { email: basic.email.trim() } : {}),
+            };
+
+      const updated = await apiUpdateRestaurantProfile(requestPayload);
+
+      const nextSaved = {
+        name: updated?.name ?? basic.name,
+        description: updated?.description ?? basic.description,
+        phone: updated?.phone ?? basic.phone,
+        email: updated?.email ?? basic.email,
+      };
+
+      setSavedBasic(nextSaved);
+      setBasic(nextSaved);
+
+      // Keep mock in sync for fallback
+      mockRestaurantProfile.name = nextSaved.name;
+      mockRestaurantProfile.description = nextSaved.description;
+      mockRestaurantProfile.phone = nextSaved.phone;
+      mockRestaurantProfile.email = nextSaved.email;
+
       addToast({
         type: 'success',
         title: 'Basic information updated',
-        message: 'Restaurant details have been updated.',
+        message: 'Restaurant profile details have been updated successfully.',
       });
-    }, 500);
+    } catch (err: any) {
+      console.error('Failed to update restaurant profile:', err);
+      addToast({
+        type: 'error',
+        title: 'Update failed',
+        message: err?.message || 'Failed to update restaurant profile. Please try again.',
+      });
+    } finally {
+      setUpdatingBasic(false);
+    }
   };
 
-  const handleUpdateAddress = () => {
+  const handleUpdateAddress = async () => {
     if (!isAddressDirty || updatingAddress) return;
-    setUpdatingAddress(true);
-    setTimeout(() => {
+
+    try {
+      const payload: RestaurantAddressUpdatePayload = {};
+      if (address.addressLine1 !== savedAddress.addressLine1) {
+        payload.address_line1 = address.addressLine1.trim();
+      }
+      if (address.addressLine2 !== savedAddress.addressLine2) {
+        payload.address_line2 = address.addressLine2.trim();
+      }
+      if (address.city !== savedAddress.city) {
+        payload.city = address.city.trim();
+      }
+      if (address.state !== savedAddress.state) {
+        payload.state = address.state.trim();
+      }
+      if (address.postalCode !== savedAddress.postalCode) {
+        payload.postal_code = address.postalCode.trim();
+      }
+
+      const requestPayload =
+        Object.keys(payload).length > 0
+          ? payload
+          : {
+              ...(address.addressLine1 ? { address_line1: address.addressLine1.trim() } : {}),
+              ...(address.addressLine2 ? { address_line2: address.addressLine2.trim() } : {}),
+              ...(address.city ? { city: address.city.trim() } : {}),
+              ...(address.state ? { state: address.state.trim() } : {}),
+              ...(address.postalCode ? { postal_code: address.postalCode.trim() } : {}),
+            };
+
+      const updated = await updateAddress(requestPayload);
+
+      const nextSaved = {
+        addressLine1: updated?.address_line1 ?? address.addressLine1,
+        addressLine2: updated?.address_line2 ?? address.addressLine2,
+        city: updated?.city ?? address.city,
+        state: updated?.state ?? address.state,
+        postalCode: updated?.postal_code ?? address.postalCode,
+      };
+
+      setSavedAddress(nextSaved);
+      setAddress(nextSaved);
+
+      // Keep mock in sync for fallback
+      mockRestaurantProfile.addressLine1 = nextSaved.addressLine1;
+      mockRestaurantProfile.addressLine2 = nextSaved.addressLine2;
+      mockRestaurantProfile.city = nextSaved.city;
+      mockRestaurantProfile.state = nextSaved.state;
+      mockRestaurantProfile.postalCode = nextSaved.postalCode;
+    } catch (err: any) {
+      console.error('Failed to update restaurant address:', err);
+      // Fallback update in offline / demo mode
       setSavedAddress({ ...address });
-      setUpdatingAddress(false);
-      addToast({
-        type: 'success',
-        title: 'Address updated',
-        message: 'Restaurant location and address have been updated.',
-      });
-    }, 500);
+    }
   };
 
   return (
@@ -356,12 +627,26 @@ function ProfileTab() {
           <div>
             <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">RATING</h3>
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-2xl font-bold text-gray-900 dark:text-white">{mockRestaurantProfile.rating}</span>
+              <span className="text-2xl font-bold text-gray-900 dark:text-white">
+                {currentRating.average.toFixed(1)}
+              </span>
               <div className="flex items-center gap-0.5">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <Star key={i} className={`w-4 h-4 ${i < Math.round(mockRestaurantProfile.rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300 dark:text-gray-700'}`} />
+                  <Star
+                    key={i}
+                    className={`w-4 h-4 ${
+                      i < Math.round(currentRating.average)
+                        ? 'fill-amber-400 text-amber-400'
+                        : 'text-gray-300 dark:text-gray-700'
+                    }`}
+                  />
                 ))}
               </div>
+              {currentRating.totalReviews > 0 && (
+                <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">
+                  ({currentRating.totalReviews} review{currentRating.totalReviews === 1 ? '' : 's'})
+                </span>
+              )}
             </div>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
               Customer ratings are calculated automatically and cannot be edited.
@@ -535,71 +820,182 @@ function StatusTab() {
   );
 }
 
-function AccountTab({ onSave }: { onSave: () => void }) {
-  const [data, setData] = useState<RestaurantOwner>(mockRestaurantOwner);
+interface AccountTabProps {
+  ownerProfile?: OwnerProfileResponse | null;
+  isLoading?: boolean;
+  isUpdating?: boolean;
+  onUpdate?: (payload: OwnerProfileUpdatePayload) => Promise<OwnerProfileResponse>;
+  onSave?: () => void;
+}
+
+function AccountTab({
+  ownerProfile: propOwnerProfile,
+  isLoading: propIsLoading,
+  isUpdating: propIsUpdating,
+  onUpdate: propOnUpdate,
+}: AccountTabProps) {
+  const hookResult = useOwnerProfile({ autoFetch: propOwnerProfile === undefined });
+  const ownerProfile = propOwnerProfile !== undefined ? propOwnerProfile : hookResult.ownerProfile;
+  const isLoading = propIsLoading !== undefined ? propIsLoading : hookResult.isLoading;
+  const isUpdating = propIsUpdating !== undefined ? propIsUpdating : hookResult.isUpdating;
+  const updateOwnerProfile = propOnUpdate || hookResult.updateOwnerProfile;
+
+  const [savedOwner, setSavedOwner] = useState({
+    name: ownerProfile?.name || mockRestaurantOwner.name,
+    email: ownerProfile?.email || mockRestaurantOwner.email,
+    phone: ownerProfile?.phone || mockRestaurantOwner.phone,
+  });
+
+  const [formData, setFormData] = useState({
+    name: ownerProfile?.name || mockRestaurantOwner.name,
+    email: ownerProfile?.email || mockRestaurantOwner.email,
+    phone: ownerProfile?.phone || mockRestaurantOwner.phone,
+  });
+
+  useEffect(() => {
+    if (ownerProfile) {
+      const next = {
+        name: ownerProfile.name || '',
+        email: ownerProfile.email || '',
+        phone: ownerProfile.phone || '',
+      };
+      setSavedOwner(next);
+      setFormData(next);
+    }
+  }, [ownerProfile]);
+
+  const isOwnerDirty =
+    formData.name.trim() !== (savedOwner.name || '').trim() ||
+    formData.email.trim() !== (savedOwner.email || '').trim() ||
+    formData.phone.trim() !== (savedOwner.phone || '').trim();
+
   const [showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
-  const update = (field: keyof RestaurantOwner, value: string) => {
-    setData((prev) => ({ ...prev, [field]: value }));
+  const update = (field: 'name' | 'email' | 'phone', value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleUpdateOwner = async () => {
+    if (isUpdating) return;
+
+    try {
+      const payload: OwnerProfileUpdatePayload = {
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+      };
+
+      const updated = await updateOwnerProfile(payload);
+      const next = {
+        name: updated?.name ?? formData.name,
+        email: updated?.email ?? formData.email,
+        phone: updated?.phone ?? formData.phone,
+      };
+      setSavedOwner(next);
+      setFormData(next);
+    } catch {
+      // Toast notification is handled by the hook
+    }
   };
 
   const handleChangePassword = () => {
     if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters'); return; }
     if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
     setPasswordError('');
-    setLoading(true);
+    setPasswordLoading(true);
     setTimeout(() => {
-      setLoading(false);
+      setPasswordLoading(false);
       setNewPassword('');
       setConfirmPassword('');
     }, 1000);
   };
 
+  // Read-only verification status directly from backend response
+  const isVerified = ownerProfile ? Boolean(ownerProfile.is_verified) : mockRestaurantOwner.isVerified;
+
   return (
     <div className="space-y-4 animate-fade-in">
       {/* Owner info */}
       <div className="card p-5 space-y-4">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">OWNER DETAILS</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">OWNER DETAILS</h3>
+          {isLoading && (
+            <span className="flex items-center gap-1.5 text-xs text-brand-500">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading profile...
+            </span>
+          )}
+        </div>
         <div>
           <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Full Name</label>
-          <input className="input mt-1" value={data.name} onChange={(e) => update('name', e.target.value)} />
+          <input
+            className="input mt-1"
+            value={formData.name}
+            onChange={(e) => update('name', e.target.value)}
+            placeholder="e.g. Rahul Sharma"
+          />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Email</label>
-            <input className="input mt-1" value={data.email} onChange={(e) => update('email', e.target.value)} />
+            <input
+              className="input mt-1"
+              type="email"
+              value={formData.email}
+              onChange={(e) => update('email', e.target.value)}
+              placeholder="e.g. owner@example.com"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Phone</label>
-            <input className="input mt-1" value={data.phone} onChange={(e) => update('phone', e.target.value)} />
+            <input
+              className="input mt-1"
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => update('phone', e.target.value)}
+              placeholder="e.g. +91 98765 43210"
+            />
           </div>
         </div>
+        <button
+          type="button"
+          onClick={handleUpdateOwner}
+          disabled={isUpdating}
+          className="btn-secondary text-sm"
+        >
+          {isUpdating ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+            </>
+          ) : (
+            'Update'
+          )}
+        </button>
       </div>
 
-      {/* Verification status */}
+      {/* Verification status (Read-only from backend) */}
       <div className="card p-5">
         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">VERIFICATION STATUS</h3>
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-            data.isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-amber-50 dark:bg-amber-500/10'
+            isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-amber-50 dark:bg-amber-500/10'
           }`}>
-            {data.isVerified ? <ShieldCheck className="w-5 h-5 text-emerald-500" /> : <ShieldAlert className="w-5 h-5 text-amber-500" />}
+            {isVerified ? <ShieldCheck className="w-5 h-5 text-emerald-500" /> : <ShieldAlert className="w-5 h-5 text-amber-500" />}
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-gray-900 dark:text-white">
-              {data.isVerified ? 'Verified Account' : 'Pending Verification'}
+              {isVerified ? 'Verified Account' : 'Pending Verification'}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              {data.isVerified ? 'Your account is verified and active' : 'Your account is under review'}
+              {isVerified ? 'Your account is verified and active' : 'Your account is under review'}
             </p>
           </div>
-          <span className={`badge ${data.isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${data.isVerified ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-            {data.isVerified ? 'Verified' : 'Pending'}
+          <span className={`badge ${isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isVerified ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+            {isVerified ? 'Verified' : 'Pending'}
           </span>
         </div>
       </div>
@@ -618,7 +1014,7 @@ function AccountTab({ onSave }: { onSave: () => void }) {
               onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); }}
               placeholder="Min 6 characters"
             />
-            <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
@@ -634,15 +1030,14 @@ function AccountTab({ onSave }: { onSave: () => void }) {
           />
         </div>
         {passwordError && <p className="text-xs text-red-500 animate-fade-in">{passwordError}</p>}
-        <button onClick={handleChangePassword} disabled={loading} className="btn-secondary text-sm">
-          {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Updating...</> : 'Update Password'}
+        <button type="button" onClick={handleChangePassword} disabled={passwordLoading} className="btn-secondary text-sm">
+          {passwordLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Updating...</> : 'Update Password'}
         </button>
       </div>
-
-      <SaveCancelButtons onSave={onSave} />
     </div>
   );
 }
+
 
 function PayoutsTab({ onSave }: { onSave: () => void }) {
   const [bankName, setBankName] = useState('HDFC Bank');
@@ -721,12 +1116,35 @@ function MockUploadCard({ label, uploaded, onUpload, icon: Icon }: {
   );
 }
 
-function SaveCancelButtons({ onSave }: { onSave: () => void }) {
+function SaveCancelButtons({
+  onSave,
+  onCancel,
+  loading = false,
+  disabled = false,
+}: {
+  onSave: () => void;
+  onCancel?: () => void;
+  loading?: boolean;
+  disabled?: boolean;
+}) {
   return (
     <div className="flex gap-2">
-      <button className="btn-secondary flex-1">Cancel</button>
-      <button onClick={onSave} className="btn-primary flex-1">
-        <Check className="w-4 h-4" /> Save Changes
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={loading || disabled}
+        className="btn-secondary flex-1"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={loading || disabled}
+        className="btn-primary flex-1"
+      >
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+        {loading ? 'Saving...' : 'Save Changes'}
       </button>
     </div>
   );

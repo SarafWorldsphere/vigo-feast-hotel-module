@@ -206,7 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           id: me.id,
           name: me.name,
           email: me.email,
-          phone: me.phone,
+          phone: me.phone || '',
         });
 
         try {
@@ -616,7 +616,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           id: me.id,
           name: me.name,
           email: me.email,
-          phone: me.phone,
+          phone: me.phone || '',
         });
       } catch {
         // ignore if not yet available

@@ -57,9 +57,15 @@ export interface OwnerProfileResponse {
   id: string;
   name: string;
   email: string;
-  phone: string;
-  is_active?: boolean;
-  is_verified?: boolean;
+  phone?: string | null;
+  is_verified: boolean;
+  is_active: boolean;
+}
+
+export interface OwnerProfileUpdatePayload {
+  name?: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface CuisineOption {
@@ -918,6 +924,133 @@ export async function apiDeleteOffer(offerId: string | number): Promise<void> {
     method: 'DELETE',
   });
 }
+
+export interface RestaurantProfileUpdatePayload {
+  name?: string;
+  description?: string;
+  phone?: string;
+  email?: string;
+}
+
+export interface RestaurantImagesResponse {
+  logo_url?: string | null;
+  cover_image_url?: string | null;
+}
+
+export interface RestaurantRatingResponse {
+  average: number;
+  total_reviews: number;
+}
+
+export interface RestaurantProfileResponse {
+  id: string;
+  name: string;
+  description?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  images?: RestaurantImagesResponse;
+  address?: RestaurantAddressResponse;
+  rating?: RestaurantRatingResponse | number;
+  owner_id?: string;
+  logo_url?: string | null;
+  cover_image_url?: string | null;
+  address_line1?: string;
+  address_line2?: string | null;
+  city?: string;
+  state?: string | null;
+  postal_code?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  total_ratings?: number;
+  is_active?: boolean;
+  is_verified?: boolean;
+}
+
+/**
+ * GET /api/v1/restaurants/me/profile
+ * Retrieves current profile details for the authenticated restaurant
+ */
+export async function apiGetRestaurantProfile(): Promise<RestaurantProfileResponse> {
+  return request<RestaurantProfileResponse>('/api/v1/restaurants/me/profile', {
+    method: 'GET',
+  });
+}
+
+/**
+ * PATCH /api/v1/restaurants/me/profile
+ * Updates basic profile details for the authenticated restaurant
+ */
+export async function apiUpdateRestaurantProfile(
+  payload: RestaurantProfileUpdatePayload
+): Promise<RestaurantProfileResponse> {
+  return request<RestaurantProfileResponse>('/api/v1/restaurants/me/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface RestaurantAddressResponse {
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+}
+
+export interface RestaurantAddressUpdatePayload {
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+}
+
+/**
+ * GET /api/v1/restaurants/me/address
+ * Retrieves current address details for the authenticated restaurant
+ */
+export async function apiGetRestaurantAddress(): Promise<RestaurantAddressResponse> {
+  return request<RestaurantAddressResponse>('/api/v1/restaurants/me/address', {
+    method: 'GET',
+  });
+}
+
+/**
+ * PATCH /api/v1/restaurants/me/address
+ * Updates address details for the authenticated restaurant
+ */
+export async function apiUpdateRestaurantAddress(
+  payload: RestaurantAddressUpdatePayload
+): Promise<RestaurantAddressResponse> {
+  return request<RestaurantAddressResponse>('/api/v1/restaurants/me/address', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * GET /api/v1/owners/me/profile
+ * Retrieves owner profile details for the authenticated owner
+ */
+export async function apiGetOwnerProfile(): Promise<OwnerProfileResponse> {
+  return request<OwnerProfileResponse>('/api/v1/owners/me/profile', {
+    method: 'GET',
+  });
+}
+
+/**
+ * PATCH /api/v1/owners/me/profile
+ * Updates owner profile details (name, email, phone)
+ */
+export async function apiUpdateOwnerProfile(
+  payload: OwnerProfileUpdatePayload
+): Promise<OwnerProfileResponse> {
+  return request<OwnerProfileResponse>('/api/v1/owners/me/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 
 
 

@@ -50,6 +50,18 @@ class RestaurantOwner(Base):
         DateTime(timezone=True),
         nullable=True
     )
+
+    is_deleted = Column(
+        Boolean,
+        nullable=False,
+        default=False
+    )
+
+    @property
+    def owner_id(self):
+        return self.id
+
+
 class RestaurantOwnerSession(Base):
     __tablename__ = "vgf_restaurant_owner_sessions"
 
