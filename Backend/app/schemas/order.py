@@ -45,3 +45,22 @@ class OrderListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OrderItemCreate(BaseModel):
+    menu_item_id: UUID
+    quantity: int = 1
+    unit_price: Optional[Decimal] = None
+
+
+class OrderCreate(BaseModel):
+    customer_id: int
+    restaurant_id: UUID
+    items: List[OrderItemCreate] = []
+    subtotal: Optional[Decimal] = None
+    gst_amount: Optional[Decimal] = None
+    delivery_charge: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    total_amount: Optional[Decimal] = None
+    delivery_eta: Optional[datetime] = None
+

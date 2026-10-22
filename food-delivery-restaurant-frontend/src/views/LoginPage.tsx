@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ChefHat, Eye, EyeOff, Loader2, ArrowLeft, Phone, Mail, Lock, KeyRound, ShieldCheck } from 'lucide-react';
-import { RegistrationStatus, apiLogin, apiRefreshToken } from '@/services/api';
+import { RegistrationStatus, apiLogin, apiRefreshToken, apiRequestOtp, apiVerifyOtp } from '@/services/api';
 import { AnimatedCheckmark } from '@/components/ui/SuccessAnimation';
 
 export function LoginPage() {
@@ -12,7 +12,7 @@ export function LoginPage() {
   const [error, setError] = useState('');
 
   // Password form
-  const [identifier, setIdentifier] = useState('partner@narayani.com');
+  const [identifier, setIdentifier] = useState('partner@vigofeast.com');
   const [password, setPassword] = useState('Password@123');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -21,7 +21,9 @@ export function LoginPage() {
 
   // OTP form
   const [phone, setPhone] = useState('');
+  const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   const [otpSent, setOtpSent] = useState(false);
+  const [requestId, setRequestId] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [resendTimer, setResendTimer] = useState(0);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -63,19 +65,32 @@ export function LoginPage() {
     }
   };
 
-  const handleSendOtp = () => {
-    if (!phone.trim() || phone.trim().length < 10) {
-      setError('Enter a valid phone number');
+  const handleSendOtp = async () => {
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone || trimmedPhone.length < 10) {
+      setError('Enter a valid phone number (at least 10 digits)');
       return;
     }
     setError('');
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      const res = await apiRequestOtp({ phone: trimmedPhone, language });
+      setRequestId(res.request_id);
       setOtpSent(true);
-      setResendTimer(30);
+      setResendTimer(60);
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
-    }, 800);
+    } catch (err: any) {
+      const msg: string = err?.message || 'Failed to send OTP. Please try again.';
+      if (msg.includes('429') || msg.toLowerCase().includes('wait')) {
+        setError('Please wait before requesting another OTP.');
+      } else if (msg.includes('400') || msg.toLowerCase().includes('phone')) {
+        setError('Unable to send OTP to this number. Please check and try again.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOtpChange = (index: number, val: string) => {
@@ -97,9 +112,18 @@ export function LoginPage() {
       setError('Enter the 6-digit OTP');
       return;
     }
+    if (!requestId) {
+      setError('Session expired. Please request a new OTP.');
+      return;
+    }
     setError('');
     setLoading(true);
     try {
+      await apiVerifyOtp({
+        request_id: requestId,
+        phone: phone.trim(),
+        otp: otp.join(''),
+      });
       setLoading(false);
       setSuccessState(true);
       setTimeout(async () => {
@@ -107,7 +131,14 @@ export function LoginPage() {
       }, 950);
     } catch (err: any) {
       setLoading(false);
-      setError(err?.message || 'OTP verification failed');
+      const msg: string = err?.message || 'OTP verification failed';
+      if (msg.includes('401') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('expired')) {
+        setError('Invalid or expired OTP. Please check the code and try again.');
+      } else if (msg.includes('429') || msg.toLowerCase().includes('wait')) {
+        setError('Too many attempts. Please wait before trying again.');
+      } else {
+        setError(msg);
+      }
     }
   };
 
@@ -131,6 +162,7 @@ export function LoginPage() {
   const resetOtp = () => {
     setOtpSent(false);
     setOtp(['', '', '', '', '', '']);
+    setRequestId('');
     setResendTimer(0);
     setError('');
   };
@@ -181,7 +213,7 @@ export function LoginPage() {
           <div className="w-16 h-16 rounded-2xl bg-brand-500 flex items-center justify-center shadow-elevated mb-3">
             <ChefHat className="w-9 h-9 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">NARAYANI</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">VIGO FEAST</h1>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Partner Dashboard</p>
         </div>
 
@@ -311,6 +343,19 @@ export function LoginPage() {
                     </div>
                   </div>
 
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">OTP Language</label>
+                    <select
+                      className="input mt-1 w-full"
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
+                    >
+                      <option value="en">English</option>
+                      <option value="hi">Hindi</option>
+                      <option value="te">Telugu</option>
+                    </select>
+                  </div>
+
                   {error && <p className="text-xs text-red-500 animate-fade-in">{error}</p>}
 
                   <button
@@ -369,13 +414,27 @@ export function LoginPage() {
                       <ArrowLeft className="w-3.5 h-3.5" /> Change number
                     </button>
                     <button
-                      onClick={() => {
-                        if (resendTimer === 0) {
-                          setResendTimer(30);
-                          setError('');
+                      onClick={async () => {
+                        if (resendTimer > 0 || loading) return;
+                        setOtp(['', '', '', '', '', '']);
+                        setError('');
+                        setLoading(true);
+                        try {
+                          const res = await apiRequestOtp({ phone: phone.trim(), language });
+                          setRequestId(res.request_id);
+                          setResendTimer(60);
+                        } catch (err: any) {
+                          const msg: string = err?.message || 'Failed to resend OTP.';
+                          if (msg.includes('429') || msg.toLowerCase().includes('wait')) {
+                            setError('Please wait before requesting another OTP.');
+                          } else {
+                            setError(msg);
+                          }
+                        } finally {
+                          setLoading(false);
                         }
                       }}
-                      disabled={resendTimer > 0}
+                      disabled={resendTimer > 0 || loading}
                       className="text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline disabled:opacity-50 disabled:no-underline"
                     >
                       {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
@@ -384,7 +443,7 @@ export function LoginPage() {
 
                   <button
                     onClick={handleOtpLogin}
-                    disabled={loading}
+                    disabled={loading || otp.some((d) => !d)}
                     className="btn-primary w-full"
                   >
                     {loading ? (

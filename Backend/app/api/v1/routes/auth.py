@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -23,15 +24,73 @@ from app.models.restaurant_owner_session import RestaurantOwnerSession
 from app.schemas.auth import (
     OwnerLoginRequest,
     OwnerLoginResponse,
+    OwnerOtpRequest,
+    OwnerOtpRequestResponse,
+    OwnerOtpVerifyRequest,
+    OwnerOtpVerifyResponse,
     OwnerRegisterRequest,
     OwnerRegisterResponse,
 )
+from app.services.owner_otp import verify_otp_request
+from app.services.owner_otp_service import request_owner_otp
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"],
 )
+
+
+def create_owner_auth_session(
+    owner: RestaurantOwner,
+    response: Response,
+    db: Session,
+) -> str:
+    """Create the existing refresh session and set authentication cookies."""
+
+    now = datetime.now(timezone.utc)
+
+    refresh_token = generate_refresh_token()
+    refresh_token_hash = hash_refresh_token(refresh_token)
+
+    session = RestaurantOwnerSession(
+        owner_id=owner.id,
+        refresh_token_hash=refresh_token_hash,
+        expires_at=now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+
+    owner.last_login_at = now
+    db.add(session)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    access_token = create_access_token(str(owner.id))
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+    return access_token
+
 
 
 @router.post(
@@ -369,3 +428,113 @@ def get_current_owner_profile(
         "is_active": current_owner.is_active,
         "is_verified": current_owner.is_verified,
     }
+
+
+@router.post(
+    "/otp/request",
+    response_model=OwnerOtpRequestResponse,
+    status_code=status.HTTP_200_OK,
+)
+def request_login_otp(
+    request: OwnerOtpRequest,
+    db: Session = Depends(get_db),
+):
+    owner = (
+        db.query(RestaurantOwner)
+        .filter(
+            RestaurantOwner.phone == request.phone,
+            RestaurantOwner.is_active.is_(True),
+            RestaurantOwner.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not owner:
+        # Generic response prevents revealing account existence.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to send OTP to this phone number",
+        )
+
+    try:
+        request_id = request_owner_otp(
+            db=db,
+            phone=owner.phone,
+            purpose="LOGIN",
+            language=request.language,
+            owner_id=owner.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        )
+    except Exception:
+        logger.exception("OTP request failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to send OTP. Please try again later.",
+        )
+
+    return OwnerOtpRequestResponse(
+        message="If eligible, an OTP has been requested.",
+        request_id=request_id,
+    )
+
+
+@router.post(
+    "/otp/verify",
+    response_model=OwnerOtpVerifyResponse,
+    status_code=status.HTTP_200_OK,
+)
+def verify_login_otp(
+    request: OwnerOtpVerifyRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    owner = (
+        db.query(RestaurantOwner)
+        .filter(
+            RestaurantOwner.phone == request.phone,
+            RestaurantOwner.is_active.is_(True),
+            RestaurantOwner.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP",
+        )
+
+    try:
+        valid = verify_otp_request(
+            db=db,
+            request_id=request.request_id,
+            phone=owner.phone,
+            purpose="LOGIN",
+            otp=request.otp,
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to verify OTP. Please try again later.",
+        )
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP",
+        )
+
+    access_token = create_owner_auth_session(
+        owner=owner,
+        response=response,
+        db=db,
+    )
+
+    return OwnerOtpVerifyResponse(
+        message="Login successful",
+        owner_id=str(owner.id),
+        access_token=access_token,
+    )

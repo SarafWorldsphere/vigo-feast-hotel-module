@@ -1,10 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import {
-  analyticsData,
-  analyticsSalesTrend,
-  analyticsTopItems,
-  analyticsCustomerBreakdownByRange,
+  useAnalyticsOverview,
+  useSalesTrend,
+  useCustomerBreakdown,
+  useTopSellingItems,
+  useHighestRevenueItems,
+  useMenuPerformance,
+  useExportAnalytics,
+} from '@/hooks';
+import {
   AnalyticsRange,
   AnalyticsItemPerformance,
   AnalyticsTrendPoint,
@@ -16,7 +21,7 @@ import {
   CheckCircle2, XCircle, Clock, Star, TrendingUp, IndianRupee,
   ArrowUpRight, ArrowDownRight, Users, Target, Zap, Award,
   Calendar, Download, Search, ChevronUp, ChevronDown,
-  Eye,
+  Eye, RefreshCw,
 } from 'lucide-react';
 
 const rangeTabs: { id: AnalyticsRange; label: string }[] = [
@@ -26,12 +31,17 @@ const rangeTabs: { id: AnalyticsRange; label: string }[] = [
   { id: 'custom', label: 'Custom' },
 ];
 
-// Pre-computed unique categories outside the component
-const categories = ['All', ...Array.from(new Set(analyticsTopItems.map((item) => item.category)))];
+function formatMetricChange(changePercent: number | null | undefined): { change: string | null; up: boolean } {
+  if (changePercent === null || changePercent === undefined) {
+    return { change: null, up: true };
+  }
+  const n = Number(changePercent);
+  const up = n >= 0;
+  return { change: `${up ? '+' : ''}${n.toFixed(1)}%`, up };
+}
 
 export function AnalyticsPage() {
   const { addToast } = useApp();
-  const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<AnalyticsRange>('today');
   const [chartMetric, setChartMetric] = useState<'revenue' | 'orders' | 'both'>('both');
 
@@ -40,61 +50,249 @@ export function AnalyticsPage() {
   const [customEndDate, setCustomEndDate] = useState('2026-10-15');
   const [appliedCustomDates, setAppliedCustomDates] = useState({ start: '2026-10-01', end: '2026-10-15' });
 
+  // Real API hook calling GET /api/v1/analytics/overview
+  const {
+    overview,
+    isLoading: isOverviewLoading,
+    error: overviewError,
+    setPeriod,
+    setDateRange,
+    refetch: refetchOverview,
+  } = useAnalyticsOverview({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Real API hook calling GET /api/v1/analytics/sales-trend
+  const {
+    points: salesTrendPoints,
+    isLoading: isSalesTrendLoading,
+    error: salesTrendError,
+    setPeriod: setSalesTrendPeriod,
+    setDateRange: setSalesTrendDateRange,
+    refetch: refetchSalesTrend,
+  } = useSalesTrend({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Real API hook calling GET /api/v1/analytics/customer-breakdown
+  const {
+    breakdown,
+    isLoading: isBreakdownLoading,
+    error: breakdownError,
+    setPeriod: setBreakdownPeriod,
+    setDateRange: setBreakdownDateRange,
+    refetch: refetchBreakdown,
+  } = useCustomerBreakdown({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Real API hook calling GET /api/v1/analytics/top-selling-items
+  const {
+    items: topSellingItems,
+    isLoading: isTopSellingLoading,
+    error: topSellingError,
+    setPeriod: setTopSellingPeriod,
+    setDateRange: setTopSellingDateRange,
+    refetch: refetchTopSelling,
+  } = useTopSellingItems({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Real API hook calling GET /api/v1/analytics/highest-revenue-items
+  const {
+    items: highestRevenueItems,
+    isLoading: isHighestRevenueLoading,
+    error: highestRevenueError,
+    setPeriod: setHighestRevenuePeriod,
+    setDateRange: setHighestRevenueDateRange,
+    refetch: refetchHighestRevenue,
+  } = useHighestRevenueItems({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Real API hook calling GET /api/v1/analytics/menu-performance
+  const {
+    items: menuPerformanceItems,
+    isLoading: isMenuPerformanceLoading,
+    error: menuPerformanceError,
+    setPeriod: setMenuPerformancePeriod,
+    setDateRange: setMenuPerformanceDateRange,
+    refetch: refetchMenuPerformance,
+  } = useMenuPerformance({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
+  // Export analytics CSV hook calling GET /api/v1/analytics/export
+  const {
+    isExporting,
+    exportCsv,
+  } = useExportAnalytics({
+    period: range === 'weekly' ? 'week' : range === 'monthly' ? 'month' : range,
+    startDate: range === 'custom' ? appliedCustomDates.start : undefined,
+    endDate: range === 'custom' ? appliedCustomDates.end : undefined,
+  });
+
   // Table filtering and sorting
   const [tableSearch, setTableSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [sortBy, setSortBy] = useState<keyof AnalyticsItemPerformance>('revenue');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // Initial load
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 400);
-    return () => clearTimeout(t);
-  }, []);
-
-  // Smooth loading simulation when changing range
+  // Smooth period changes directly hitting the backend API
   const handleRangeChange = (newRange: AnalyticsRange) => {
     if (newRange === range) return;
-    setLoading(true);
     setRange(newRange);
-    setTimeout(() => setLoading(false), 350);
+    // For custom filter: do NOT call APIs on tab select.
+    // Opening the custom tab displays the date range picker container.
+    // The API calls will happen only when the user clicks "Apply Range".
+    if (newRange === 'custom') {
+      return;
+    }
+    const backendPeriod = newRange === 'weekly' ? 'week' : newRange === 'monthly' ? 'month' : newRange;
+    setPeriod(backendPeriod);
+    setSalesTrendPeriod(backendPeriod);
+    setBreakdownPeriod(backendPeriod);
+    setTopSellingPeriod(backendPeriod);
+    setHighestRevenuePeriod(backendPeriod);
+    setMenuPerformancePeriod(backendPeriod);
   };
 
   const handleApplyCustomDates = () => {
-    setLoading(true);
-    setAppliedCustomDates({ start: customStartDate, end: customEndDate });
-    setTimeout(() => {
-      setLoading(false);
+    if (!customStartDate || !customEndDate) {
       addToast({
-        type: 'info',
-        title: 'Date Range Applied',
-        message: `Analytics updated for ${customStartDate} to ${customEndDate}`,
+        type: 'error',
+        title: 'Select Dates',
+        message: 'Both start date and end date are required for custom period.',
       });
-    }, 350);
+      return;
+    }
+    if (customStartDate > customEndDate) {
+      addToast({
+        type: 'error',
+        title: 'Invalid Date Range',
+        message: 'Start date cannot be after end date.',
+      });
+      return;
+    }
+
+    setAppliedCustomDates({ start: customStartDate, end: customEndDate });
+    setDateRange(customStartDate, customEndDate);
+    setSalesTrendDateRange(customStartDate, customEndDate);
+    setBreakdownDateRange(customStartDate, customEndDate);
+    setTopSellingDateRange(customStartDate, customEndDate);
+    setHighestRevenueDateRange(customStartDate, customEndDate);
+    setMenuPerformanceDateRange(customStartDate, customEndDate);
+    addToast({
+      type: 'info',
+      title: 'Date Range Applied',
+      message: `Analytics updated for ${customStartDate} to ${customEndDate}`,
+    });
   };
 
-  // Get active range data
-  const data = analyticsData[range];
-  const trend = analyticsSalesTrend[range];
-  const customerBreakdown = analyticsCustomerBreakdownByRange[range] || analyticsCustomerBreakdownByRange.today;
+  const isHourly = range === 'today' || (range === 'custom' && appliedCustomDates.start === appliedCustomDates.end);
 
-  // Filtered and sorted table items (pure inline computation, zero hook overhead)
-  let filteredAndSortedItems = analyticsTopItems;
+  const trend: AnalyticsTrendPoint[] = useMemo(() => {
+    if (!salesTrendPoints || salesTrendPoints.length === 0) {
+      return [];
+    }
+    return salesTrendPoints.map((pt) => {
+      const d = new Date(pt.bucket_start);
+      let label = '';
+      let periodName = '';
+
+      if (isHourly) {
+        label = d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+        const nextH = new Date(d.getTime() + 60 * 60 * 1000);
+        const endStr = nextH.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+        periodName = `${label} - ${endStr}`;
+      } else {
+        label = d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+        periodName = d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short' });
+      }
+
+      return {
+        label,
+        periodName,
+        orders: pt.orders || 0,
+        revenue: Number(pt.gross_revenue) || 0,
+      };
+    });
+  }, [salesTrendPoints, isHourly]);
+
+  const customerBreakdown = useMemo(() => {
+    const total = breakdown?.total_customers ?? 0;
+    const newCount = breakdown?.new_customers ?? 0;
+    const returningCount = breakdown?.returning_customers ?? 0;
+    const newPct = Math.round(Number(breakdown?.new_customer_percent ?? 0));
+    const returningPct = Math.round(Number(breakdown?.returning_customer_percent ?? 0));
+
+    return {
+      total,
+      new: newCount,
+      returning: returningCount,
+      newPct,
+      returningPct,
+    };
+  }, [breakdown]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    menuPerformanceItems.forEach((item) => {
+      if (item.category_name) set.add(item.category_name);
+    });
+    return ['All', ...Array.from(set)];
+  }, [menuPerformanceItems]);
+
+  // Filtered and sorted table items
+  let filteredAndSortedItems = menuPerformanceItems;
   if (selectedCategory !== 'All') {
-    filteredAndSortedItems = filteredAndSortedItems.filter((item) => item.category === selectedCategory);
+    filteredAndSortedItems = filteredAndSortedItems.filter(
+      (item) => (item.category_name || 'General') === selectedCategory
+    );
   }
 
   if (tableSearch.trim()) {
     const q = tableSearch.toLowerCase().trim();
     filteredAndSortedItems = filteredAndSortedItems.filter(
-      (item) => item.name.toLowerCase().includes(q) || item.category.toLowerCase().includes(q)
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        (item.category_name && item.category_name.toLowerCase().includes(q))
     );
   }
 
   filteredAndSortedItems = [...filteredAndSortedItems].sort((a, b) => {
     const dir = sortDir === 'asc' ? 1 : -1;
-    const valA = a[sortBy];
-    const valB = b[sortBy];
+    let valA: any;
+    let valB: any;
+
+    if (sortBy === 'orders') {
+      valA = a.orders;
+      valB = b.orders;
+    } else if (sortBy === 'revenue') {
+      valA = Number(a.gross_revenue) || 0;
+      valB = Number(b.gross_revenue) || 0;
+    } else if (sortBy === 'rating') {
+      valA = a.rating != null ? Number(a.rating) : -1;
+      valB = b.rating != null ? Number(b.rating) : -1;
+    } else if (sortBy === 'prepTimeMinutes') {
+      valA = a.average_preparation_minutes != null ? Number(a.average_preparation_minutes) : -1;
+      valB = b.average_preparation_minutes != null ? Number(b.average_preparation_minutes) : -1;
+    } else {
+      valA = a.name;
+      valB = b.name;
+    }
 
     if (typeof valA === 'number' && typeof valB === 'number') {
       return (valA - valB) * dir;
@@ -111,102 +309,117 @@ export function AnalyticsPage() {
     }
   };
 
-  // KPI Tiles
-  const kpiCards = [
-    {
-      label: 'Acceptance Rate',
-      value: data.acceptanceRate,
-      suffix: '%',
-      icon: CheckCircle2,
-      color: 'text-emerald-600 dark:text-emerald-400',
-      bg: 'bg-emerald-50 dark:bg-emerald-500/10',
-      change: '+2.1%',
-      up: true,
-      description: 'Orders accepted vs received',
-    },
-    {
-      label: 'Cancellation Rate',
-      value: data.cancellationRate,
-      suffix: '%',
-      decimals: 1,
-      icon: XCircle,
-      color: 'text-red-600 dark:text-red-400',
-      bg: 'bg-red-50 dark:bg-red-500/10',
-      change: '-0.8%',
-      up: true,
-      description: 'Orders cancelled post-placement',
-    },
-    {
-      label: 'Avg Order Value (AOV)',
-      value: data.avgOrderValue,
-      prefix: '₹',
-      icon: IndianRupee,
-      color: 'text-brand-600 dark:text-brand-400',
-      bg: 'bg-brand-50 dark:bg-brand-500/10',
-      change: '+4.2%',
-      up: true,
-      description: 'Gross revenue divided by orders',
-    },
-    {
-      label: 'Avg Preparation Time',
-      value: data.avgPrepTime,
-      suffix: ' min',
-      icon: Clock,
-      color: 'text-blue-600 dark:text-blue-400',
-      bg: 'bg-blue-50 dark:bg-blue-500/10',
-      change: '-2.5 min',
-      up: true,
-      description: 'Accepted to food ready time',
-    },
-    {
-      label: 'On-Time Prep Rate',
-      value: data.onTimePrepRate,
-      suffix: '%',
-      decimals: 1,
-      icon: Zap,
-      color: 'text-amber-600 dark:text-amber-400',
-      bg: 'bg-amber-50 dark:bg-amber-500/10',
-      change: '+3.5%',
-      up: true,
-      description: 'Prepared within target SLA',
-    },
-    {
-      label: 'Order Accuracy',
-      value: data.orderAccuracy,
-      suffix: '%',
-      decimals: 1,
-      icon: Target,
-      color: 'text-cyan-600 dark:text-cyan-400',
-      bg: 'bg-cyan-50 dark:bg-cyan-500/10',
-      change: '+1.2%',
-      up: true,
-      description: 'Zero item-missing reports',
-    },
-    {
-      label: 'Customer Rating',
-      value: data.avgRating,
-      decimals: 1,
-      icon: Star,
-      color: 'text-purple-600 dark:text-purple-400',
-      bg: 'bg-purple-50 dark:bg-purple-500/10',
-      change: '+0.2',
-      up: true,
-      description: 'Average 5-star customer reviews',
-    },
-    {
-      label: 'Gross Revenue',
-      value: data.totalRevenue,
-      prefix: '₹',
-      icon: TrendingUp,
-      color: 'text-emerald-600 dark:text-emerald-400',
-      bg: 'bg-emerald-50 dark:bg-emerald-500/10',
-      change: '+12.5%',
-      up: true,
-      description: `${data.totalOrders} total orders processed`,
-    },
-  ];
+  // KPI Tiles mapped directly from GET /api/v1/analytics/overview response
+  const kpiCards = useMemo(() => {
+    const accChange = formatMetricChange(overview?.acceptance_rate?.change_percent);
+    const canChange = formatMetricChange(overview?.cancellation_rate?.change_percent);
+    const aovChange = formatMetricChange(overview?.average_order_value?.change_percent);
+    const prepChange = formatMetricChange(overview?.average_preparation_time?.change_percent);
+    const onTimeChange = formatMetricChange(overview?.on_time_preparation_rate?.change_percent);
+    const accOrderChange = formatMetricChange(overview?.order_accuracy?.change_percent);
+    const ratingChange = formatMetricChange(overview?.customer_rating?.change_percent);
+    const grossRevChange = formatMetricChange(overview?.gross_revenue?.change_percent);
 
-  if (loading) return <PageSkeleton />;
+    return [
+      {
+        label: 'Acceptance Rate',
+        value: overview?.acceptance_rate?.value != null ? Number(overview.acceptance_rate.value) : null,
+        suffix: '%',
+        decimals: 1,
+        icon: CheckCircle2,
+        color: 'text-emerald-600 dark:text-emerald-400',
+        bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        change: accChange.change,
+        up: accChange.up,
+        description: 'Orders accepted vs received',
+      },
+      {
+        label: 'Cancellation Rate',
+        value: overview?.cancellation_rate?.value != null ? Number(overview.cancellation_rate.value) : null,
+        suffix: '%',
+        decimals: 1,
+        icon: XCircle,
+        color: 'text-red-600 dark:text-red-400',
+        bg: 'bg-red-50 dark:bg-red-500/10',
+        change: canChange.change,
+        up: !canChange.up, // lower cancellation rate is positive
+        description: 'Orders cancelled post-placement',
+      },
+      {
+        label: 'Avg Order Value (AOV)',
+        value: overview?.average_order_value?.value != null ? Number(overview.average_order_value.value) : null,
+        prefix: '₹',
+        decimals: 0,
+        icon: IndianRupee,
+        color: 'text-brand-600 dark:text-brand-400',
+        bg: 'bg-brand-50 dark:bg-brand-500/10',
+        change: aovChange.change,
+        up: aovChange.up,
+        description: 'Delivered orders average value',
+      },
+      {
+        label: 'Avg Preparation Time',
+        value: overview?.average_preparation_time?.value != null ? Number(overview.average_preparation_time.value) : null,
+        suffix: ' min',
+        decimals: 1,
+        icon: Clock,
+        color: 'text-blue-600 dark:text-blue-400',
+        bg: 'bg-blue-50 dark:bg-blue-500/10',
+        change: prepChange.change,
+        up: !prepChange.up, // lower prep time is positive
+        description: 'Start to completed prep time',
+      },
+      {
+        label: 'On-Time Prep Rate',
+        value: overview?.on_time_preparation_rate?.value != null ? Number(overview.on_time_preparation_rate.value) : null,
+        suffix: '%',
+        decimals: 1,
+        icon: Zap,
+        color: 'text-amber-600 dark:text-amber-400',
+        bg: 'bg-amber-50 dark:bg-amber-500/10',
+        change: onTimeChange.change,
+        up: onTimeChange.up,
+        description: 'Prepared within target SLA',
+      },
+      {
+        label: 'Order Accuracy',
+        value: overview?.order_accuracy?.value != null ? Number(overview.order_accuracy.value) : null,
+        suffix: '%',
+        decimals: 1,
+        icon: Target,
+        color: 'text-cyan-600 dark:text-cyan-400',
+        bg: 'bg-cyan-50 dark:bg-cyan-500/10',
+        change: accOrderChange.change,
+        up: accOrderChange.up,
+        description: 'Zero item-missing reports',
+      },
+      {
+        label: 'Customer Rating',
+        value: overview?.customer_rating?.value != null ? Number(overview.customer_rating.value) : null,
+        decimals: 1,
+        icon: Star,
+        color: 'text-purple-600 dark:text-purple-400',
+        bg: 'bg-purple-50 dark:bg-purple-500/10',
+        change: ratingChange.change,
+        up: ratingChange.up,
+        description: 'Average 5-star customer reviews',
+      },
+      {
+        label: 'Gross Revenue',
+        value: overview?.gross_revenue?.value != null ? Number(overview.gross_revenue.value) : null,
+        prefix: '₹',
+        decimals: 0,
+        icon: TrendingUp,
+        color: 'text-emerald-600 dark:text-emerald-400',
+        bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        change: grossRevChange.change,
+        up: grossRevChange.up,
+        description: overview ? `${overview.start_date} to ${overview.end_date}` : 'Gross revenue from delivered orders',
+      },
+    ];
+  }, [overview]);
+
+  if (isOverviewLoading && !overview) return <PageSkeleton />;
 
   return (
     <div className="space-y-5 animate-fade-in pb-8">
@@ -247,20 +460,68 @@ export function AnalyticsPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() =>
-              addToast({
-                type: 'success',
-                title: 'Export Started',
-                message: `Analytics dataset for ${range} has been generated.`,
-              })
-            }
-            className="btn-secondary text-xs sm:text-sm py-1.5 px-3 flex items-center gap-2 ml-auto"
+            onClick={() => {
+              refetchOverview();
+              refetchSalesTrend();
+              refetchBreakdown();
+              refetchTopSelling();
+              refetchHighestRevenue();
+              refetchMenuPerformance();
+            }}
+            disabled={isOverviewLoading || isSalesTrendLoading || isBreakdownLoading || isTopSellingLoading || isHighestRevenueLoading || isMenuPerformanceLoading}
+            className="btn-ghost p-2 rounded-xl text-gray-500 hover:text-gray-900 dark:hover:text-white shrink-0 transition-colors"
+            title="Refresh analytics data"
           >
-            <Download className="w-4 h-4" />
-            <span>Export CSV</span>
+            <RefreshCw className={`w-4 h-4 ${(isOverviewLoading || isSalesTrendLoading || isBreakdownLoading || isTopSellingLoading || isHighestRevenueLoading || isMenuPerformanceLoading) ? 'animate-spin text-brand-500' : ''}`} />
+          </button>
+          <button
+            type="button"
+            disabled={isExporting}
+            onClick={async () => {
+              addToast({
+                type: 'info',
+                title: 'Exporting CSV',
+                message: `Preparing analytics export for ${range}...`,
+              });
+              const success = await exportCsv();
+              if (success) {
+                addToast({
+                  type: 'success',
+                  title: 'Export Downloaded',
+                  message: `Menu performance CSV for ${range} has been downloaded.`,
+                });
+              } else {
+                addToast({
+                  type: 'error',
+                  title: 'Export Failed',
+                  message: 'Could not generate CSV export. Please try again.',
+                });
+              }
+            }}
+            className="btn-secondary text-xs sm:text-sm py-1.5 px-3 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isExporting ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-brand-500" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{isExporting ? 'Exporting...' : 'Export CSV'}</span>
           </button>
         </div>
       </div>
+
+      {overviewError && (
+        <div className="card p-4 bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 text-xs flex items-center justify-between">
+          <span>Failed to load live analytics: {overviewError}</span>
+          <button
+            type="button"
+            onClick={() => refetchOverview()}
+            className="font-semibold underline ml-2"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Custom Date Range Picker Bar (Shown when 'custom' is active) */}
       {range === 'custom' && (
@@ -290,8 +551,11 @@ export function AnalyticsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setCustomStartDate('2026-09-25');
-                  setCustomEndDate('2026-10-02');
+                  const end = new Date();
+                  const start = new Date();
+                  start.setDate(end.getDate() - 7);
+                  setCustomStartDate(start.toISOString().split('T')[0]);
+                  setCustomEndDate(end.toISOString().split('T')[0]);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 text-[11px] font-medium"
               >
@@ -300,8 +564,11 @@ export function AnalyticsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setCustomStartDate('2026-09-02');
-                  setCustomEndDate('2026-10-02');
+                  const end = new Date();
+                  const start = new Date();
+                  start.setDate(end.getDate() - 30);
+                  setCustomStartDate(start.toISOString().split('T')[0]);
+                  setCustomEndDate(end.toISOString().split('T')[0]);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 text-[11px] font-medium"
               >
@@ -310,8 +577,11 @@ export function AnalyticsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setCustomStartDate('2026-09-01');
-                  setCustomEndDate('2026-09-30');
+                  const now = new Date();
+                  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+                  setCustomStartDate(start.toISOString().split('T')[0]);
+                  setCustomEndDate(end.toISOString().split('T')[0]);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 text-[11px] font-medium"
               >
@@ -345,26 +615,38 @@ export function AnalyticsPage() {
                   <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center`}>
                     <Icon className={`w-5 h-5 ${s.color}`} />
                   </div>
-                  <span
-                    className={`flex items-center gap-0.5 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      s.up
-                        ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                        : 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400'
-                    }`}
-                  >
-                    {s.up ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                    {s.change}
-                  </span>
+                  {s.change ? (
+                    <span
+                      className={`flex items-center gap-0.5 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        s.up
+                          ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400'
+                      }`}
+                    >
+                      {s.up ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                      {s.change}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500 px-2 py-0.5">
+                      --
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{s.label}</p>
                 <div className="mt-1">
-                  <CountUp
-                    value={s.value}
-                    prefix={s.prefix}
-                    suffix={s.suffix}
-                    decimals={s.decimals ?? 0}
-                    className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight"
-                  />
+                  {s.value !== null && s.value !== undefined ? (
+                    <CountUp
+                      value={s.value}
+                      prefix={s.prefix}
+                      suffix={s.suffix}
+                      decimals={s.decimals ?? 0}
+                      className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold text-gray-400 dark:text-gray-500 tracking-tight">
+                      --
+                    </span>
+                  )}
                 </div>
               </div>
               <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-2.5 pt-2 border-t border-gray-100 dark:border-gray-800/80 truncate">
@@ -503,8 +785,9 @@ export function AnalyticsPage() {
           <div className="mt-3 p-2.5 rounded-xl bg-brand-50/60 dark:bg-brand-500/10 border border-brand-200/50 dark:border-brand-500/20 text-xs">
             <span className="font-bold text-brand-700 dark:text-brand-300">💡 Loyalty Insight: </span>
             <span className="text-brand-900/80 dark:text-brand-200/80 text-[11px]">
-              Returning customers average{' '}
-              <strong>+{Math.round((customerBreakdown.returningAovMultiplier - 1) * 100)}% higher basket value</strong> than first-time diners.
+              {customerBreakdown.total > 0
+                ? `${customerBreakdown.returningPct}% of diners (${customerBreakdown.returning.toLocaleString('en-IN')}) are returning patrons, with ${customerBreakdown.new.toLocaleString('en-IN')} new diners acquired.`
+                : 'No customer orders have been recorded in this reporting period yet.'}
             </span>
           </div>
         </div>
@@ -530,63 +813,98 @@ export function AnalyticsPage() {
           </div>
 
           <div className="space-y-3">
-            {analyticsTopItems.slice(0, 5).map((item, i) => {
-              const maxOrders = analyticsTopItems[0].orders;
-              const pct = (item.orders / maxOrders) * 100;
-              return (
-                <div
-                  key={item.id}
-                  className="p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors flex items-center gap-3"
+            {topSellingError && (
+              <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center justify-between">
+                <span>Failed to load top-selling items: {topSellingError}</span>
+                <button
+                  type="button"
+                  onClick={() => refetchTopSelling()}
+                  className="font-semibold underline ml-2"
                 >
-                  {/* Rank Badge */}
-                  <span
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                      i === 0
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300 dark:border-amber-600'
-                        : i === 1
-                        ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                        : i === 2
-                        ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                        : 'text-gray-400 dark:text-gray-600'
-                    }`}
-                  >
-                    #{i + 1}
-                  </span>
-
-                  {/* Thumbnail */}
-                  <FoodImage
-                    image={item.image}
-                    name={item.name}
-                    className="w-11 h-11 rounded-xl shrink-0 object-cover shadow-sm"
-                  />
-
-                  {/* Details & Progress */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{item.name}</p>
-                      <span className="text-xs font-bold text-gray-900 dark:text-white">
-                        {item.orders.toLocaleString('en-IN')} <span className="text-[10px] text-gray-400 font-normal">orders</span>
-                      </span>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-brand-500 to-amber-500 rounded-full transition-all duration-1000"
-                        style={{ width: `${pct}%`, transitionDelay: `${i * 90}ms` }}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between mt-1 text-[11px] text-gray-400">
-                      <span>{item.category}</span>
-                      <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                        ₹{item.revenue.toLocaleString('en-IN')}
-                      </span>
+                  Retry
+                </button>
+              </div>
+            )}
+            {isTopSellingLoading ? (
+              <div className="space-y-3 py-2">
+                {[...Array(5)].map((_, idx) => (
+                  <div key={idx} className="flex items-center gap-3 animate-pulse">
+                    <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-800 shrink-0" />
+                    <div className="w-11 h-11 rounded-xl bg-gray-200 dark:bg-gray-800 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
+                      <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded w-full" />
+                      <div className="h-2.5 bg-gray-200 dark:bg-gray-800 rounded w-1/3" />
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                ))}
+              </div>
+            ) : topSellingItems.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-xs">
+                No delivered order items found for this reporting period.
+              </div>
+            ) : (
+              topSellingItems.map((item, i) => {
+                const maxQty = topSellingItems[0]?.quantity_sold || 1;
+                const pct = maxQty > 0 ? (item.quantity_sold / maxQty) * 100 : 0;
+                return (
+                  <div
+                    key={item.menu_item_id}
+                    className="p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors flex items-center gap-3"
+                  >
+                    {/* Rank Badge */}
+                    <span
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                        i === 0
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300 dark:border-amber-600'
+                          : i === 1
+                          ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                          : i === 2
+                          ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                          : 'text-gray-400 dark:text-gray-600'
+                      }`}
+                    >
+                      #{i + 1}
+                    </span>
+
+                    {/* Thumbnail */}
+                    <FoodImage
+                      image={item.image_url || undefined}
+                      name={item.name}
+                      className="w-11 h-11 rounded-xl shrink-0 object-cover shadow-sm"
+                    />
+
+                    {/* Details & Progress */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{item.name}</p>
+                        <span className="text-xs font-bold text-gray-900 dark:text-white">
+                          {item.quantity_sold.toLocaleString('en-IN')}{' '}
+                          <span className="text-[10px] text-gray-400 font-normal">
+                            sold ({item.order_count} {item.order_count === 1 ? 'order' : 'orders'})
+                          </span>
+                        </span>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-brand-500 to-amber-500 rounded-full transition-all duration-1000"
+                          style={{ width: `${pct}%`, transitionDelay: `${i * 90}ms` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between mt-1 text-[11px] text-gray-400">
+                        <span>{item.category_name || 'General'}</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          ₹{Number(item.gross_revenue).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -608,15 +926,43 @@ export function AnalyticsPage() {
           </div>
 
           <div className="space-y-3">
-            {[...analyticsTopItems]
-              .sort((a, b) => b.revenue - a.revenue)
-              .slice(0, 5)
-              .map((item, i) => {
-                const maxRev = [...analyticsTopItems].sort((a, b) => b.revenue - a.revenue)[0].revenue;
-                const pct = (item.revenue / maxRev) * 100;
+            {highestRevenueError && (
+              <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center justify-between">
+                <span>Failed to load highest-revenue items: {highestRevenueError}</span>
+                <button
+                  type="button"
+                  onClick={() => refetchHighestRevenue()}
+                  className="font-semibold underline ml-2"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {isHighestRevenueLoading ? (
+              <div className="space-y-3 py-2">
+                {[...Array(5)].map((_, idx) => (
+                  <div key={idx} className="flex items-center gap-3 animate-pulse">
+                    <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-800 shrink-0" />
+                    <div className="w-11 h-11 rounded-xl bg-gray-200 dark:bg-gray-800 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
+                      <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded w-full" />
+                      <div className="h-2.5 bg-gray-200 dark:bg-gray-800 rounded w-1/3" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : highestRevenueItems.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-xs">
+                No delivered order items found for this reporting period.
+              </div>
+            ) : (
+              highestRevenueItems.map((item, i) => {
+                const maxRev = Number(highestRevenueItems[0]?.gross_revenue) || 1;
+                const pct = maxRev > 0 ? (Number(item.gross_revenue) / maxRev) * 100 : 0;
                 return (
                   <div
-                    key={item.id}
+                    key={item.menu_item_id}
                     className="p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors flex items-center gap-3"
                   >
                     {/* Rank Badge */}
@@ -636,7 +982,7 @@ export function AnalyticsPage() {
 
                     {/* Thumbnail */}
                     <FoodImage
-                      image={item.image}
+                      image={item.image_url || undefined}
                       name={item.name}
                       className="w-11 h-11 rounded-xl shrink-0 object-cover shadow-sm"
                     />
@@ -646,7 +992,7 @@ export function AnalyticsPage() {
                       <div className="flex items-center justify-between mb-1">
                         <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{item.name}</p>
                         <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                          ₹{item.revenue.toLocaleString('en-IN')}
+                          ₹{Number(item.gross_revenue).toLocaleString('en-IN')}
                         </span>
                       </div>
 
@@ -659,13 +1005,16 @@ export function AnalyticsPage() {
                       </div>
 
                       <div className="flex items-center justify-between mt-1 text-[11px] text-gray-400">
-                        <span>₹{item.price} unit price</span>
-                        <span>{item.orders} orders</span>
+                        <span>{item.category_name || 'General'}</span>
+                        <span>
+                          {item.quantity_sold} sold ({item.order_count} {item.order_count === 1 ? 'order' : 'orders'})
+                        </span>
                       </div>
                     </div>
                   </div>
                 );
-              })}
+              })
+            )}
           </div>
         </div>
       </div>
@@ -772,7 +1121,21 @@ export function AnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredAndSortedItems.length === 0 ? (
+              {isMenuPerformanceLoading ? (
+                [...Array(5)].map((_, idx) => (
+                  <tr key={idx} className="border-b border-gray-50 dark:border-gray-800/50 animate-pulse">
+                    <td className="py-3 pl-2">
+                      <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-36" />
+                    </td>
+                    <td className="py-3"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-16" /></td>
+                    <td className="py-3 text-right"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-12 ml-auto" /></td>
+                    <td className="py-3 text-right"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-16 ml-auto" /></td>
+                    <td className="py-3 text-right"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-10 ml-auto" /></td>
+                    <td className="py-3 text-right"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-14 ml-auto" /></td>
+                    <td className="py-3 text-right pr-2"><div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-20 ml-auto" /></td>
+                  </tr>
+                ))
+              ) : filteredAndSortedItems.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-sm text-gray-400">
                     No items match your filter criteria.
@@ -780,40 +1143,30 @@ export function AnalyticsPage() {
                 </tr>
               ) : (
                 filteredAndSortedItems.map((item) => {
-                  const tagColors: Record<AnalyticsItemPerformance['performanceTag'], string> = {
-                    Bestseller: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/50',
-                    'High Margin': 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/50',
-                    Trending: 'bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-200/50',
-                    Popular: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200/50',
-                    Steady: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200/50',
+                  const label = item.performance_label || 'No Data';
+                  const tagColors: Record<string, string> = {
+                    'Top Performer': 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/50',
+                    Average: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200/50',
+                    'Low Performer': 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/50',
+                    'No Data': 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200/50',
                   };
 
                   return (
                     <tr
-                      key={item.id}
+                      key={item.menu_item_id}
                       className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
                     >
-                      {/* Name & Photo */}
+                      {/* Name */}
                       <td className="py-3 pl-2">
-                        <div className="flex items-center gap-3">
-                          <FoodImage
-                            image={item.image}
-                            name={item.name}
-                            className="w-9 h-9 rounded-lg shrink-0 object-cover shadow-sm"
-                          />
-                          <div>
-                            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
-                              {item.name}
-                            </p>
-                            <p className="text-[11px] text-gray-400 mt-0.5">₹{item.price} base price</p>
-                          </div>
-                        </div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
+                          {item.name}
+                        </p>
                       </td>
 
                       {/* Category */}
                       <td className="py-3">
                         <span className="badge bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-[11px] font-medium">
-                          {item.category}
+                          {item.category_name || 'General'}
                         </span>
                       </td>
 
@@ -824,32 +1177,38 @@ export function AnalyticsPage() {
 
                       {/* Revenue */}
                       <td className="py-3 text-sm font-bold text-emerald-600 dark:text-emerald-400 text-right">
-                        ₹{item.revenue.toLocaleString('en-IN')}
+                        ₹{Number(item.gross_revenue).toLocaleString('en-IN')}
                       </td>
 
                       {/* Rating */}
                       <td className="py-3 text-right">
-                        <div className="inline-flex items-center gap-1">
-                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                          <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
-                            {item.rating.toFixed(1)}
-                          </span>
-                        </div>
+                        {item.rating != null ? (
+                          <div className="inline-flex items-center gap-1">
+                            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                            <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                              {Number(item.rating).toFixed(1)}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
                       </td>
 
                       {/* Prep Time */}
                       <td className="py-3 text-xs text-gray-600 dark:text-gray-400 text-right font-medium">
-                        {item.prepTimeMinutes} mins
+                        {item.average_preparation_minutes != null
+                          ? `${Number(item.average_preparation_minutes).toFixed(0)} mins`
+                          : '—'}
                       </td>
 
                       {/* Tag */}
                       <td className="py-3 text-right pr-2">
                         <span
                           className={`badge border px-2 py-0.5 text-[10px] font-semibold ${
-                            tagColors[item.performanceTag]
+                            tagColors[label] || tagColors['No Data']
                           }`}
                         >
-                          {item.performanceTag}
+                          {label}
                         </span>
                       </td>
                     </tr>
@@ -863,7 +1222,7 @@ export function AnalyticsPage() {
         {/* Footer info */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-4 pt-3 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-400">
           <p>
-            Showing {filteredAndSortedItems.length} of {analyticsTopItems.length} menu items
+            Showing {filteredAndSortedItems.length} of {menuPerformanceItems.length} menu items
           </p>
           <p className="italic">
             Aggregated over <code>vgf_orders</code>, <code>vgf_order_items</code> & <code>vgf_menu_items</code>
@@ -886,8 +1245,16 @@ function InteractiveAnalyticsChart({
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  const maxRevenue = Math.max(...data.map((d) => d.revenue)) || 1;
-  const maxOrders = Math.max(...data.map((d) => d.orders)) || 1;
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-48 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 italic">
+        No sales or order data recorded for this period yet.
+      </div>
+    );
+  }
+
+  const maxRevenue = Math.max(...data.map((d) => d.revenue), 0) || 1;
+  const maxOrders = Math.max(...data.map((d) => d.orders), 0) || 1;
 
   const width = 100;
   const height = 65;

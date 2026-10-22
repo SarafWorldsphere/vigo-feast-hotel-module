@@ -5,6 +5,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Time,
@@ -20,10 +21,11 @@ class Order(Base):
     __tablename__ = "vgf_orders"
 
     order_id = Column(
-        BigInteger,
+        BigInteger().with_variant(Integer, "sqlite"),
         primary_key=True,
         autoincrement=True,
     )
+
     customer_id = Column(
         BigInteger,
         nullable=False,
@@ -80,6 +82,25 @@ class Order(Base):
         BigInteger,
         nullable=True,
     )
+    # Financial snapshots
+    commission_rate = Column(Numeric(5, 4), nullable=True)
+    commission_amount = Column(Numeric(10, 2), nullable=True)
+
+    commission_tax_rate = Column(Numeric(5, 4), nullable=True)
+    commission_tax_amount = Column(Numeric(10, 2), nullable=True)
+
+    restaurant_discount_amount = Column(
+        Numeric(10, 2), nullable=True
+    )
+    platform_discount_amount = Column(
+        Numeric(10, 2), nullable=True
+    )
+
+    other_fee_amount = Column(Numeric(10, 2), nullable=True)
+
+    financial_finalized_at = Column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -107,3 +128,12 @@ class Order(Base):
     is_deleted = Column(Boolean, default=False)
 
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    refunds = relationship(
+        "Refund",
+        back_populates="order",
+    )
+    tracking_events = relationship(
+        "OrderTracking",
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )

@@ -15,11 +15,14 @@ import { SettingsPage } from '@/views/SettingsPage';
 import { ReviewsPage } from '@/views/ReviewsPage';
 import { NotificationsPage } from '@/views/NotificationsPage';
 import { AnalyticsPage } from '@/views/AnalyticsPage';
+import { RefundsPage } from '@/views/RefundsPage';
 import { LoginPage } from '@/views/LoginPage';
 import { OwnerSignupPage } from '@/views/OwnerSignupPage';
 import { RegisterPage } from '@/views/RegisterPage';
 import { StatusScreenPage } from '@/views/StatusScreenPage';
-import { BarChart3, Tag, Star, Bell } from 'lucide-react';
+import { RefundModal } from '@/components/refunds/RefundModal';
+import { RefundDrawer } from '@/components/refunds/RefundDrawer';
+import { BarChart3, Tag, Star, Bell, RotateCcw } from 'lucide-react';
 
 const pageTitles: Record<string, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard', subtitle: "Today's performance overview" },
@@ -27,6 +30,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
   menu: { title: 'Menu', subtitle: 'Manage your menu items and categories' },
   delivery: { title: 'Delivery', subtitle: 'Delivery partner management' },
   earnings: { title: 'Earnings', subtitle: 'Revenue and payout details' },
+  refunds: { title: 'Refunds', subtitle: 'Manage customer refunds, claims, and payment reversals' },
   analytics: { title: 'Analytics', subtitle: 'Deep dive into your metrics' },
   offers: { title: 'Offers', subtitle: 'Create and manage promotions' },
   reviews: { title: 'Reviews', subtitle: 'Customer feedback and ratings' },
@@ -100,6 +104,7 @@ export default function HomePage() {
     'menu',
     'delivery',
     'earnings',
+    'refunds',
     'offers',
     'reviews',
     'settings',
@@ -146,6 +151,7 @@ export default function HomePage() {
           {currentPage === 'menu' && <MenuPage />}
           {currentPage === 'delivery' && <DeliveryPage />}
           {currentPage === 'earnings' && <EarningsPage />}
+          {currentPage === 'refunds' && <RefundsPage />}
           {currentPage === 'offers' && <OffersPage />}
           {currentPage === 'reviews' && <ReviewsPage />}
           {currentPage === 'settings' && <SettingsPage />}
@@ -157,6 +163,10 @@ export default function HomePage() {
 
       {/* Bottom nav (mobile) */}
       <BottomNav onMoreClick={() => setSidebarOpen(true)} />
+
+      {/* Global Modals & Drawers */}
+      <RefundModal />
+      <RefundDrawer />
 
       {/* Toasts */}
       <ToastContainer />

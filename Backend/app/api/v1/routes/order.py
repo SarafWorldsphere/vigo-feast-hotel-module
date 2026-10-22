@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_owner
@@ -18,9 +18,16 @@ from app.schemas.delivery import (
     DeliveryPartnerInfo,
     DeliveryResponse,
 )
-from app.schemas.order import OrderItemResponse, OrderListResponse, OrderResponse
+from app.schemas.order import (
+    OrderCreate,
+    OrderItemResponse,
+    OrderListResponse,
+    OrderResponse,
+)
+from app.services.order import create_customer_order
 
 router = APIRouter()
+
 
 
 def _build_delivery_response(order: Order, db: Session) -> DeliveryResponse:
@@ -173,6 +180,50 @@ def _build_delivery_response(order: Order, db: Session) -> DeliveryResponse:
         delivery_partner=partner_info,
         assignment=assignment_info,
         delivery_status=status_str,
+    )
+
+
+@router.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
+def create_order(
+    payload: OrderCreate,
+    db: Session = Depends(get_db),
+):
+    order = create_customer_order(db=db, payload=payload)
+    items_with_name = (
+        db.query(OrderItem, MenuItem.name.label("menu_item_name"))
+        .outerjoin(MenuItem, OrderItem.menu_item_id == MenuItem.id)
+        .filter(
+            OrderItem.order_id == order.order_id,
+            OrderItem.is_deleted.is_(False),
+        )
+        .all()
+    )
+    return OrderResponse(
+        order_id=order.order_id,
+        customer_id=order.customer_id,
+        restaurant_id=order.restaurant_id,
+        rider_id=order.rider_id,
+        order_status=order.order_status,
+        subtotal=order.subtotal,
+        gst_amount=order.gst_amount,
+        delivery_charge=order.delivery_charge,
+        discount_amount=order.discount_amount,
+        total_amount=order.total_amount,
+        cancellation_status=order.cancellation_status,
+        delivery_eta=order.delivery_eta,
+        created_at=order.created_at,
+        updated_at=order.updated_at,
+        items=[
+            OrderItemResponse(
+                order_item_id=item.order_item_id,
+                menu_item_id=item.menu_item_id,
+                name=item_name or f"Item #{item.order_item_id}",
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                line_total=item.line_total,
+            )
+            for item, item_name in items_with_name
+        ],
     )
 
 

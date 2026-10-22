@@ -4,9 +4,17 @@ import { Wifi, WifiOff, ChevronDown, Clock, Menu as MenuIcon, Bell } from 'lucid
 import { OfflinePanel } from './OfflinePanel';
 
 export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
-  const { isOnline, toggleOnline, goOfflineFor, offlineUntil, darkMode, newOrderCount, unreadNotificationCount, setPage } = useApp();
+  const { availability, orderSettings, offlineUntil, unreadNotificationCount, setPage } = useApp();
   const [showOfflinePanel, setShowOfflinePanel] = useState(false);
   const [offlineCountdown, setOfflineCountdown] = useState('');
+
+  const isAcceptingOrders = availability?.is_accepting_orders ?? false;
+  const isPaused = availability ? availability.is_paused : (orderSettings?.is_paused ?? false);
+  const status: 'ONLINE' | 'PAUSED' | 'OFFLINE' = isAcceptingOrders
+    ? 'ONLINE'
+    : isPaused
+    ? 'PAUSED'
+    : 'OFFLINE';
 
   useEffect(() => {
     if (!offlineUntil) {
@@ -34,6 +42,7 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
       {/* Mobile menu button */}
       <button
         onClick={onMenuClick}
+        aria-label="Open navigation menu"
         className="lg:hidden btn-ghost p-2"
       >
         <MenuIcon className="w-5 h-5" />
@@ -44,36 +53,53 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
         <div className="relative">
           <button
             onClick={() => setShowOfflinePanel(!showOfflinePanel)}
+            aria-expanded={showOfflinePanel}
+            aria-label="Online status menu"
             className={`flex items-center gap-2.5 pl-3 pr-2.5 py-2 rounded-xl border transition-all ${
-              isOnline
+              status === 'ONLINE'
                 ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20'
-                : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20'
+                : status === 'PAUSED'
+                ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20'
+                : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
             }`}
           >
             <span className="relative flex items-center">
-              {isOnline ? (
+              {status === 'ONLINE' ? (
                 <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              ) : status === 'PAUSED' ? (
+                <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               ) : (
-                <WifiOff className="w-4 h-4 text-red-600 dark:text-red-400" />
+                <WifiOff className="w-4 h-4 text-gray-500 dark:text-gray-400" />
               )}
-              {isOnline && (
+              {status === 'ONLINE' && (
                 <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                 </span>
               )}
             </span>
-            <span className={`text-sm font-semibold ${isOnline ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-              {isOnline ? 'Online' : 'Offline'}
+            <span
+              className={`text-sm font-semibold ${
+                status === 'ONLINE'
+                  ? 'text-emerald-700 dark:text-emerald-400'
+                  : status === 'PAUSED'
+                  ? 'text-amber-700 dark:text-amber-400'
+                  : 'text-gray-600 dark:text-gray-300'
+              }`}
+            >
+              {status === 'ONLINE' ? 'Online' : status === 'PAUSED' ? 'Paused' : 'Offline'}
             </span>
             {offlineCountdown && (
-              <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400 font-medium">
+              <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 font-medium">
                 <Clock className="w-3 h-3" />
                 {offlineCountdown}
               </span>
             )}
-            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showOfflinePanel ? 'rotate-180' : ''}`} />
+            <ChevronDown
+              className={`w-4 h-4 text-gray-400 transition-transform ${showOfflinePanel ? 'rotate-180' : ''}`}
+            />
           </button>
+
 
           {showOfflinePanel && (
             <>
@@ -96,10 +122,10 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
         </button>
         <div className="flex items-center gap-2.5 pl-2">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
-            N
+            V
           </div>
           <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">NARAYANI</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">VIGO FEAST</p>
             <p className="text-xs text-gray-400 dark:text-gray-500">Owner</p>
           </div>
         </div>

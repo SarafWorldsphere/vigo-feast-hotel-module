@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { Order, OrderStatus, OrderTab } from '@/data/mockData';
-import { StatusChip, getStatusConfig } from '@/components/ui/StatusChip';
+import type { Order, OrderStatus, OrderTab } from '@/types/order';
+import { StatusChip, getStatusConfig, RefundStatusChip } from '@/components/ui/StatusChip';
 import {
   X, Clock, MapPin, Phone, CreditCard, Bike, CheckCircle2, XCircle,
   ChefHat, PackageCheck, Star, IndianRupee, Timer,
-  RefreshCw,
+  RefreshCw, RotateCcw, ArrowRight,
 } from 'lucide-react';
 
 const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
@@ -20,7 +20,7 @@ const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
 ];
 
 export function OrdersPage() {
-  const { orders, loadOrders, selectedOrderId, setSelectedOrderId, updateOrderStatus, addToast } = useApp();
+  const { orders, loadOrders, selectedOrderId, setSelectedOrderId, updateOrderStatus, addToast, refunds, openRefundModal, viewRefund, availability } = useApp();
   const [activeTab, setActiveTab] = useState<OrderTab>('NEW');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -67,6 +67,29 @@ export function OrdersPage() {
 
   return (
     <div className="animate-fade-in">
+      {availability && !availability.is_accepting_orders && (
+        <div className="mb-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center shrink-0 text-amber-600 dark:text-amber-400">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Online Ordering is Currently Offline ({availability.status === 'PAUSED' ? 'Paused' : 'Closed'})
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {availability.reason === 'TEMPORARILY_PAUSED'
+                  ? 'Orders are temporarily paused. Ongoing accepted orders will continue their lifecycle.'
+                  : availability.reason === 'OUTSIDE_ORDERING_HOURS'
+                  ? 'Outside configured online-ordering hours. New orders will not be received.'
+                  : availability.reason === 'CLOSED_TODAY'
+                  ? 'The restaurant is closed for today according to schedule.'
+                  : 'New orders will not be received until the next opening window.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Tabs */}
       <div className="flex items-center justify-between gap-2 pb-3 mb-4">
         <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 scrollbar-thin">
@@ -128,6 +151,9 @@ export function OrdersPage() {
           order={selectedOrder}
           onClose={() => setSelectedOrderId(null)}
           onAction={(a) => handleAction(selectedOrder, a)}
+          refunds={refunds}
+          openRefundModal={openRefundModal}
+          viewRefund={viewRefund}
         />
       )}
     </div>
@@ -177,10 +203,11 @@ function OrderCard({ order, index, onClick, onAction }: {
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`badge px-2 py-0.5 text-[10px] ${
           order.paymentStatus === 'PAID' ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          : (order.paymentStatus === 'REFUNDED' || order.paymentStatus === 'REFUND_PENDING' || order.paymentStatus === 'PARTIALLY_REFUNDED') ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400'
           : order.paymentStatus === 'COD' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400'
           : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
         }`}>
-          {order.paymentStatus === 'PAID' ? 'Paid' : order.paymentStatus === 'COD' ? 'COD' : 'Pending'}
+          {order.paymentStatus === 'PAID' ? 'Paid' : order.paymentStatus === 'COD' ? 'COD' : order.paymentStatus === 'REFUND_PENDING' ? 'Refund Pending' : order.paymentStatus === 'PARTIALLY_REFUNDED' ? 'Partially Refunded' : order.paymentStatus === 'REFUNDED' ? 'Refunded' : 'Pending'}
         </span>
         <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
           <Clock className="w-3 h-3" />
@@ -228,10 +255,20 @@ function OrderCard({ order, index, onClick, onAction }: {
   );
 }
 
-function OrderDrawer({ order, onClose, onAction }: {
+function OrderDrawer({
+  order,
+  onClose,
+  onAction,
+  refunds,
+  openRefundModal,
+  viewRefund,
+}: {
   order: Order;
   onClose: () => void;
   onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready') => void;
+  refunds: any[];
+  openRefundModal: (defaults?: any) => void;
+  viewRefund: (id: string) => void;
 }) {
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -241,6 +278,15 @@ function OrderDrawer({ order, onClose, onAction }: {
   const lifecycleSteps: OrderStatus[] = ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'DELIVERED', 'COMPLETED'];
   const currentStepIndex = lifecycleSteps.indexOf(order.status);
   const isException = ['REJECTED', 'CANCELLED', 'FAILED', 'REFUNDED'].includes(order.status);
+  const isRefundRelated = ['REFUND_PENDING', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(order.paymentStatus || '');
+  const cleanOrderId = (order.id || '').replace(/^#/, '');
+  const cleanOrderShortId = (order.shortId || '').replace(/^#/, '');
+  const linkedRefund = refunds.find(
+    (r) =>
+      (r.order_id || '').replace(/^#/, '') === cleanOrderId ||
+      (r.order_short_id || '').replace(/^#/, '') === cleanOrderId ||
+      (r.order_id || '').replace(/^#/, '') === cleanOrderShortId
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -371,7 +417,8 @@ function OrderDrawer({ order, onClose, onAction }: {
           </div>
 
           {/* Payment */}
-          <div className="card p-4 flex items-center gap-3">
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
               order.paymentStatus === 'PAID' ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-amber-50 dark:bg-amber-500/10'
             }`}>
@@ -383,9 +430,60 @@ function OrderDrawer({ order, onClose, onAction }: {
                 {order.paymentStatus === 'PAID' ? 'Payment received' : order.paymentStatus === 'COD' ? 'Cash on delivery' : 'Payment pending'}
               </p>
             </div>
-            <span className={`badge ${order.paymentStatus === 'PAID' ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
+            <span className={`badge ${order.paymentStatus === 'PAID' ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : isRefundRelated ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
               {order.paymentStatus}
             </span>
+            </div>
+
+            {/* Refund Status & View Link */}
+            {(isRefundRelated || linkedRefund) && (
+              <div className="pt-2.5 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="w-3.5 h-3.5 text-brand-500" />
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Refund Status:</span>
+                  {linkedRefund ? (
+                    <RefundStatusChip status={linkedRefund.status} size="sm" />
+                  ) : (
+                    <span className="badge px-2 py-0.5 text-[10px] bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 font-medium">
+                      {order.paymentStatus}
+                    </span>
+                  )}
+                </div>
+                {linkedRefund && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      viewRefund(linkedRefund.id);
+                    }}
+                    className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    View Refund <ArrowRight className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Request Refund Action for Paid Orders */}
+            {order.paymentStatus === 'PAID' && !linkedRefund && (
+              <div className="pt-2.5 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <span className="text-xs text-gray-400 dark:text-gray-500">Need to issue an adjustment?</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openRefundModal({
+                      orderId: order.shortId || order.id,
+                      customerName: order.customerName,
+                      suggestedAmount: order.total,
+                    });
+                  }}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-brand-500" />
+                  Request Refund
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Delivery address */}

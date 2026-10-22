@@ -3,7 +3,7 @@ import './globals.css';
 import { AppProvider } from '@/context/AppContext';
 
 export const metadata: Metadata = {
-  title: 'Narayani Partner - Food Delivery Restaurant Platform',
+  title: 'Vigo Feast Partner - Food Delivery Restaurant Platform',
   description: 'Manage incoming orders, restaurant profile, cuisines, settlements, and analytics.',
   icons: {
     icon: '/favicon.ico',

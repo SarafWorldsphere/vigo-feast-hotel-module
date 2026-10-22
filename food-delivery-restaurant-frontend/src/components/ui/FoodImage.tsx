@@ -19,8 +19,8 @@ const foodImages: Record<string, string> = {
   rice: 'https://images.pexels.com/photos/5409010/pexels-photo-5409010.jpeg?auto=compress&cs=tinysrgb&w=400',
 };
 
-export function FoodImage({ image, name, className = '' }: { image: string; name: string; className?: string }) {
-  const resolveUrl = (img: string) => {
+export function FoodImage({ image = '', name, className = '' }: { image?: string | null; name: string; className?: string }) {
+  const resolveUrl = (img?: string | null) => {
     if (!img) return foodImages.paneer;
     if (img.startsWith('/') || img.startsWith('http')) return img;
     return foodImages[img] ?? foodImages.paneer;

@@ -57,7 +57,7 @@ export function StatusScreenPage() {
           <div className="w-16 h-16 rounded-2xl bg-brand-500 flex items-center justify-center shadow-elevated mb-3">
             <ChefHat className="w-9 h-9 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">NARAYANI</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">VIGO FEAST</h1>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Partner Onboarding Status</p>
         </div>
 
@@ -116,7 +116,7 @@ export function StatusScreenPage() {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-gray-400 dark:text-gray-500">Restaurant</span>
                   <span className="font-medium text-gray-800 dark:text-gray-200">
-                    {statusDetails?.restaurant_name || 'Narayani Kitchen'}
+                    {statusDetails?.restaurant_name || 'Vigo Feast Restaurant'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-xs">

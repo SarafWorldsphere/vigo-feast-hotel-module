@@ -11,6 +11,14 @@ from app.api.v1.offers import router as offers_router
 from app.routers.feedback import router as feedback_router
 from app.api.v1.routes.restaurant import router as restaurant_router
 from app.api.v1.routes.owner import router as owner_router
+from app.api.v1.routes.dashboard import router as dashboard_router
+from app.api.v1.routes.earnings import router as earnings_router
+from app.api.v1.routes.settlement import router as settlement_router
+from app.api.v1.routes.analytics import router as analytics_router
+from app.api.v1.routes.complaints import router as complaints_router
+from app.api.v1.routes.refunds import router as refunds_router
+from app.api.v1.routes.notifications import router as notifications_router
+from app.api.v1.routes import restaurant_hours
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -22,7 +30,9 @@ order_listener = OrderListener(websocket_manager)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    order_listener.loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
+    order_listener.loop = loop
+    websocket_manager.loop = loop
 
     listener_task = asyncio.create_task(
         asyncio.to_thread(order_listener.listen)
@@ -41,10 +51,12 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
     ],
@@ -110,6 +122,43 @@ app.include_router(
 
 app.include_router(
     owner_router,
+)
+
+app.include_router(
+    dashboard_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    earnings_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    settlement_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    analytics_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    complaints_router,
+    prefix="/api/v1",
+)
+
+app.include_router(refunds_router)
+
+app.include_router(
+    restaurant_hours.router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    notifications_router,
+    prefix="/api/v1",
 )
 
 

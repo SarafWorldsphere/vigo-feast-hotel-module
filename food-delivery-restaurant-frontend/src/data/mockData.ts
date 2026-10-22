@@ -1,56 +1,6 @@
-export type OrderStatus =
-  | 'PLACED'
-  | 'ACCEPTED'
-  | 'PREPARING'
-  | 'READY_FOR_PICKUP'
-  | 'PICKED_UP'
-  | 'DELIVERED'
-  | 'COMPLETED'
-  | 'REJECTED'
-  | 'CANCELLED'
-  | 'FAILED'
-  | 'REFUNDED';
+import type { PaymentStatus } from '@/types/order';
 
-export type OrderTab = 'NEW' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'PICKED_UP' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
-
-export type ItemAvailability = 'AVAILABLE' | 'OUT_OF_STOCK' | 'TEMP_UNAVAILABLE';
-
-export interface OrderItem {
-  id: string;
-  name: string;
-  quantity: number;
-  price: number;
-  variant?: string;
-  addOns?: string[];
-  notes?: string;
-}
-
-export interface Order {
-  id: string;
-  shortId: string;
-  customerName: string;
-  customerPhone: string;
-  status: OrderStatus;
-  items: OrderItem[];
-  subtotal: number;
-  taxes: number;
-  deliveryFee: number;
-  packagingFee: number;
-  discount: number;
-  total: number;
-  paymentStatus: 'PAID' | 'COD' | 'PENDING';
-  paymentMethod: string;
-  placedAt: string;
-  prepTime: number;
-  deliveryPartner?: {
-    name: string;
-    phone: string;
-    vehicle: string;
-  };
-  deliveryAddress: string;
-  rating?: number;
-  timeline: { status: OrderStatus; timestamp: string; label: string }[];
-}
+export type ItemAvailability = 'AVAILABLE' | 'TEMP_UNAVAILABLE' | 'OUT_OF_STOCK';
 
 export interface MenuItem {
   id: string;
@@ -202,121 +152,9 @@ export const operatingHours = [
   { day: 'Sunday', open: '09:00', close: '23:00', closed: false },
 ];
 
-// ===== Delivery mock data =====
+// ===== Earnings types & settlement data =====
 
-export type DeliveryStage =
-  | 'WAITING_FOR_PARTNER'
-  | 'ASSIGNED'
-  | 'ARRIVING'
-  | 'ARRIVED'
-  | 'PICKED_UP'
-  | 'IN_TRANSIT'
-  | 'DELIVERED';
-
-export const deliveryStageOrder: DeliveryStage[] = [
-  'WAITING_FOR_PARTNER', 'ASSIGNED', 'ARRIVING', 'ARRIVED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED',
-];
-
-export const deliveryStageConfig: Record<DeliveryStage, { label: string; bg: string; text: string; dot: string }> = {
-  WAITING_FOR_PARTNER: { label: 'Waiting for Partner', bg: 'bg-gray-100 dark:bg-gray-700/40', text: 'text-gray-600 dark:text-gray-400', dot: 'bg-gray-500' },
-  ASSIGNED: { label: 'Assigned', bg: 'bg-indigo-50 dark:bg-indigo-500/10', text: 'text-indigo-700 dark:text-indigo-400', dot: 'bg-indigo-500' },
-  ARRIVING: { label: 'Arriving', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500' },
-  ARRIVED: { label: 'Arrived', bg: 'bg-cyan-50 dark:bg-cyan-500/10', text: 'text-cyan-700 dark:text-cyan-400', dot: 'bg-cyan-500' },
-  PICKED_UP: { label: 'Picked Up', bg: 'bg-teal-50 dark:bg-teal-500/10', text: 'text-teal-700 dark:text-teal-400', dot: 'bg-teal-500' },
-  IN_TRANSIT: { label: 'In Transit', bg: 'bg-orange-50 dark:bg-orange-500/10', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
-  DELIVERED: { label: 'Delivered', bg: 'bg-emerald-50 dark:bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500' },
-};
-
-export interface DeliveryPartner {
-  name: string;
-  phone: string;
-  vehicle: string;
-  vehicleType: string;
-  rating: number;
-  photo: string;
-}
-
-export interface Delivery {
-  id: string;
-  shortId: string;
-  orderId?: number;
-  assignmentId?: number;
-  orderShortId: string;
-  customerName: string;
-  customerPhone?: string;
-  stage: DeliveryStage;
-  etaMinutes: number;
-  partner?: DeliveryPartner;
-  address: string;
-  distance: number;
-  timeline: { stage: DeliveryStage; timestamp: string; label: string }[];
-  order?: Order;
-  assignmentStatus?: string;
-}
-
-const partnerNames = ['Ramesh K', 'Suresh P', 'Mahesh B', 'Ganesh S', 'Lokesh M', 'Deepak R', 'Naveen J', 'Prakash T'];
-const vehicleTypes = ['Bike', 'Scooter', 'Bicycle'];
-const vehicleNumbers = ['KA01 AB 1234', 'KA02 CD 5678', 'KA03 EF 9012', 'KA04 GH 3456', 'KA05 IJ 7890'];
-
-export function generateDelivery(stage?: DeliveryStage): Delivery {
-  return {
-    id: '',
-    shortId: '',
-    orderId: 0,
-    orderShortId: '',
-    customerName: '',
-    stage: stage || 'WAITING_FOR_PARTNER',
-    etaMinutes: 0,
-    address: '',
-    distance: 0,
-    timeline: [],
-  };
-}
-
-export function generateDeliveries(count: number): Delivery[] {
-  return [];
-}
-
-export type DeliveryExceptionType = 'PARTNER_CANCEL' | 'REASSIGNMENT' | 'DELAYED_PICKUP' | 'ADDRESS_ISSUE' | 'DELIVERY_FAILURE';
-
-export const deliveryExceptionConfig: Record<DeliveryExceptionType, { label: string; bg: string; text: string }> = {
-  PARTNER_CANCEL: { label: 'Partner Cancelled', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400' },
-  REASSIGNMENT: { label: 'Reassignment Needed', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400' },
-  DELAYED_PICKUP: { label: 'Delayed Pickup', bg: 'bg-orange-50 dark:bg-orange-500/10', text: 'text-orange-700 dark:text-orange-400' },
-  ADDRESS_ISSUE: { label: 'Address Issue', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400' },
-  DELIVERY_FAILURE: { label: 'Delivery Failure', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400' },
-};
-
-export interface DeliveryException {
-  id: string;
-  type: DeliveryExceptionType;
-  deliveryShortId: string;
-  customerName: string;
-  note: string;
-  actionLabel: string;
-  time: string;
-}
-
-export const mockDeliveryExceptions: DeliveryException[] = [];
-
-// ===== Earnings mock data =====
-
-export type EarningsRange = 'today' | 'weekly' | 'monthly';
-
-export interface EarningsSummary {
-  grossSales: number;
-  netEarnings: number;
-  commission: number;
-  taxes: number;
-  discounts: number;
-  refunds: number;
-}
-
-export const earningsData: Record<EarningsRange, EarningsSummary> = {
-  today: { grossSales: 48230, netEarnings: 43890, commission: 2894, taxes: 2412, discounts: 1240, refunds: 0 },
-  weekly: { grossSales: 312450, netEarnings: 284120, commission: 18747, taxes: 15623, discounts: 8960, refunds: 1200 },
-  monthly: { grossSales: 1248900, netEarnings: 1136200, commission: 74934, taxes: 62445, discounts: 35800, refunds: 5400 },
-};
+export type EarningsRange = 'today' | 'weekly' | 'monthly' | 'custom';
 
 export interface WaterfallStep {
   label: string;
@@ -324,43 +162,14 @@ export interface WaterfallStep {
   type: 'start' | 'subtract' | 'add' | 'end';
 }
 
-export function getWaterfallData(range: EarningsRange): WaterfallStep[] {
-  const d = earningsData[range];
-  return [
-    { label: 'Gross Sales', value: d.grossSales, type: 'start' },
-    { label: 'Commission', value: -d.commission, type: 'subtract' },
-    { label: 'Taxes/Fees', value: -d.taxes, type: 'subtract' },
-    { label: 'Discounts', value: -d.discounts, type: 'subtract' },
-    { label: 'Refunds', value: -d.refunds, type: 'subtract' },
-    { label: 'Net Earnings', value: d.netEarnings, type: 'end' },
-  ];
-}
 
-export interface SettlementRecord {
-  id: string;
-  date: string;
-  amount: number;
-  status: 'PAID' | 'PENDING' | 'PROCESSING';
-  orders: number;
-  period: string;
-}
-
-export const mockSettlements: SettlementRecord[] = [
-  { id: 's1', date: '2026-09-04', amount: 42180, status: 'PAID', orders: 82, period: 'Sep 4' },
-  { id: 's2', date: '2026-09-03', amount: 38940, status: 'PAID', orders: 76, period: 'Sep 3' },
-  { id: 's3', date: '2026-09-02', amount: 45210, status: 'PAID', orders: 89, period: 'Sep 2' },
-  { id: 's4', date: '2026-09-01', amount: 41030, status: 'PAID', orders: 80, period: 'Sep 1' },
-  { id: 's5', date: '2026-08-31', amount: 39870, status: 'PAID', orders: 78, period: 'Aug 31' },
-  { id: 's6', date: '2026-09-05', amount: 48230, status: 'PROCESSING', orders: 87, period: 'Sep 5 (Today)' },
-  { id: 's7', date: '2026-09-05', amount: 0, status: 'PENDING', orders: 0, period: 'Sep 5 (Upcoming)' },
-];
 
 export const payoutDetails = {
   bankName: 'HDFC Bank',
   accountNumber: '5010XXXXXXXXXX4823',
   ifsc: 'HDFC0001234',
-  accountHolder: 'NARAYANI Restaurant',
-  upiId: 'narayani@hdfc',
+  accountHolder: 'VIGO FEAST Restaurant',
+  upiId: 'vigofeast@hdfc',
   nextPayoutDate: '2026-09-06',
   nextPayoutAmount: 48230,
   payoutCycle: 'Daily (T+1)',
@@ -384,10 +193,10 @@ export interface RestaurantProfile {
 }
 
 export const mockRestaurantProfile: RestaurantProfile = {
-  name: 'Narayani Kitchen',
+  name: 'Vigo Feast Restaurant',
   description: 'Authentic North Indian and South Indian cuisine served fresh daily. Known for our biryani and dosa.',
   phone: '+91 80 2345 6789',
-  email: 'contact@narayanikitchen.com',
+  email: 'contact@vigofeast.com',
   addressLine1: '221B MG Road, Indiranagar',
   addressLine2: 'Near Metro Station',
   city: 'Bangalore',
@@ -408,7 +217,7 @@ export interface RestaurantOwner {
 
 export const mockRestaurantOwner: RestaurantOwner = {
   name: 'Rahul Sharma',
-  email: 'rahul@narayanikitchen.com',
+  email: 'rahul@vigofeast.com',
   phone: '+91 98765 43210',
   isVerified: true,
   isActive: true,
@@ -459,6 +268,7 @@ export type ComplaintStatus = 'OPEN' | 'UNDER_REVIEW' | 'RESOLVED' | 'REJECTED';
 
 export interface Complaint {
   id: string;
+  order_id?: string;
   orderShortId: string;
   customerName: string;
   type: ComplaintType;
@@ -486,15 +296,188 @@ export const complaintStatusConfig: Record<ComplaintStatus, { label: string; bg:
   REJECTED: { label: 'Rejected', bg: 'bg-gray-100 dark:bg-gray-700/40', text: 'text-gray-600 dark:text-gray-400', dot: 'bg-gray-500' },
 };
 
-export const mockComplaints: Complaint[] = [
-  { id: 'c1', orderShortId: 'ORD48231', customerName: 'Priya Patel', type: 'MISSING_ITEM', description: 'Ordered 2 garlic naan but only received 1. The rest of the order was correct.', status: 'OPEN', createdAt: '2026-09-05T14:45:00', resolution: null, resolvedAt: null },
-  { id: 'c2', orderShortId: 'ORD48198', customerName: 'Amit Kumar', type: 'TEMPERATURE', description: 'The biryani arrived cold. It seems it was sitting for a while before pickup.', status: 'UNDER_REVIEW', createdAt: '2026-09-05T12:30:00', resolution: null, resolvedAt: null },
-  { id: 'c3', orderShortId: 'ORD47902', customerName: 'Sneha Reddy', type: 'PACKAGING', description: 'The chutney container leaked and made a mess in the bag. Food was fine otherwise.', status: 'RESOLVED', createdAt: '2026-09-04T20:00:00', resolution: 'Apologized to customer and issued a ₹50 discount on next order. Packaging team notified.', resolvedAt: '2026-09-04T20:30:00' },
-  { id: 'c4', orderShortId: 'ORD47855', customerName: 'Vikram Singh', type: 'FOOD_QUALITY', description: 'The paneer was rubbery and the gravy was too salty. Not up to the usual standard.', status: 'OPEN', createdAt: '2026-09-04T13:30:00', resolution: null, resolvedAt: null },
-  { id: 'c5', orderShortId: 'ORD47610', customerName: 'Anjali Gupta', type: 'WRONG_ITEM', description: 'Ordered chocolate brownie but received gulab jamun instead. Still tasty but not what I ordered.', status: 'RESOLVED', createdAt: '2026-09-03T21:15:00', resolution: 'Acknowledged the mix-up. Sent a complimentary brownie on the next order.', resolvedAt: '2026-09-03T21:45:00' },
-  { id: 'c6', orderShortId: 'ORD47301', customerName: 'Deepika Joshi', type: 'FOOD_QUALITY', description: 'Cold coffee was watery and spring rolls were soggy. Quality was below expectations.', status: 'UNDER_REVIEW', createdAt: '2026-09-02T20:30:00', resolution: null, resolvedAt: null },
-  { id: 'c7', orderShortId: 'ORD47188', customerName: 'Karan Mehta', type: 'DELIVERY', description: 'Delivery partner went to the wrong address. Took 45 minutes extra to get the food.', status: 'RESOLVED', createdAt: '2026-09-02T13:15:00', resolution: 'Reported to delivery partner management. Customer received full refund for delivery fee.', resolvedAt: '2026-09-02T14:00:00' },
-  { id: 'c8', orderShortId: 'ORD46902', customerName: 'Sanjay Verma', type: 'OTHER', description: 'The bill showed a different total than what was displayed on the app. Discrepancy of ₹20.', status: 'REJECTED', createdAt: '2026-09-01T14:15:00', resolution: 'Reviewed the order. The ₹20 was the packaging fee which is displayed separately. No discrepancy found.', resolvedAt: '2026-09-01T16:00:00' },
+export const mockComplaints: Complaint[] = [];
+
+// ===== Refunds & Payments mock data =====
+
+export type RefundStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+export type RefundType = 'FULL' | 'PARTIAL';
+
+export interface RefundItem {
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+export interface Refund {
+  id: string;
+  payment_id: string;
+  order_id: string;
+  order_short_id: string;
+  customer_name: string;
+  customer_phone?: string;
+  amount: number;
+  reason: string;
+  reason_note?: string;
+  refund_type: RefundType;
+  items_refunded?: RefundItem[];
+  status: RefundStatus;
+  refund_reference: string;
+  payment_method: string;
+  original_amount: number;
+  failed_reason?: string;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string | null;
+  complaint_id?: number | string | null;
+  complaintId?: string | number | null;
+}
+
+export interface Payment {
+  payment_id: string;
+  order_id: string;
+  payment_method: string;
+  amount: number;
+  status: PaymentStatus;
+  created_at: string;
+}
+
+export const refundStatusConfig: Record<RefundStatus, { label: string; bg: string; text: string; dot: string }> = {
+  PENDING: { label: 'Pending', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500' },
+  PROCESSING: { label: 'Processing', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500 animate-pulse' },
+  COMPLETED: { label: 'Completed', bg: 'bg-emerald-50 dark:bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  FAILED: { label: 'Failed', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400', dot: 'bg-red-500' },
+};
+
+export const mockRefunds: Refund[] = [
+  {
+    id: 'RFD-48231',
+    payment_id: 'PAY-48231',
+    order_id: 'ORD48231',
+    order_short_id: 'ORD48231',
+    customer_name: 'Priya Patel',
+    customer_phone: '+91 98765 11001',
+    amount: 150,
+    reason: 'Missing item',
+    reason_note: 'Customer reported 1 missing garlic naan from the delivered packet.',
+    refund_type: 'PARTIAL',
+    items_refunded: [{ name: 'Garlic Naan', quantity: 1, price: 50 }, { name: 'Item Compensation Credit', quantity: 1, price: 100 }],
+    status: 'COMPLETED',
+    refund_reference: 'HDFC_RF_9812401',
+    payment_method: 'UPI (Google Pay)',
+    original_amount: 620,
+    created_at: '2026-09-05T15:00:00Z',
+    completed_at: '2026-09-05T15:15:00Z',
+  },
+  {
+    id: 'RFD-48198',
+    payment_id: 'PAY-48198',
+    order_id: 'ORD48198',
+    order_short_id: 'ORD48198',
+    customer_name: 'Amit Kumar',
+    customer_phone: '+91 98765 11002',
+    amount: 450,
+    reason: 'Temperature issue',
+    reason_note: 'Food arrived cold due to traffic hold-up during transit.',
+    refund_type: 'FULL',
+    items_refunded: [{ name: 'Chicken Biryani', quantity: 1, price: 320 }, { name: 'Cold Coffee', quantity: 1, price: 130 }],
+    status: 'PROCESSING',
+    refund_reference: 'RAZORPAY_RF_872134',
+    payment_method: 'Credit Card (HDFC)',
+    original_amount: 450,
+    created_at: '2026-09-05T13:00:00Z',
+    completed_at: null,
+  },
+  {
+    id: 'RFD-47902',
+    payment_id: 'PAY-47902',
+    order_id: 'ORD47902',
+    order_short_id: 'ORD47902',
+    customer_name: 'Sneha Reddy',
+    customer_phone: '+91 98765 11003',
+    amount: 120,
+    reason: 'Damaged packaging',
+    reason_note: 'Chutney container leaked inside paper bag during transit.',
+    refund_type: 'PARTIAL',
+    items_refunded: [{ name: 'Packaging Damage Waiver', quantity: 1, price: 120 }],
+    status: 'COMPLETED',
+    refund_reference: 'PAYTM_RF_349812',
+    payment_method: 'Paytm UPI',
+    original_amount: 380,
+    created_at: '2026-09-04T20:15:00Z',
+    completed_at: '2026-09-04T20:30:00Z',
+  },
+  {
+    id: 'RFD-47855',
+    payment_id: 'PAY-47855',
+    order_id: 'ORD47855',
+    order_short_id: 'ORD47855',
+    customer_name: 'Vikram Singh',
+    customer_phone: '+91 98765 11004',
+    amount: 320,
+    reason: 'Food quality issue',
+    reason_note: 'Paneer was rubbery and gravy excessively salty.',
+    refund_type: 'FULL',
+    items_refunded: [{ name: 'Paneer Butter Masala', quantity: 1, price: 240 }, { name: 'Garlic Naan', quantity: 1, price: 50 }, { name: 'Packaging', quantity: 1, price: 30 }],
+    status: 'FAILED',
+    refund_reference: 'SBI_RF_092144',
+    payment_method: 'Net Banking (SBI)',
+    original_amount: 320,
+    failed_reason: 'Bank gateway timeout during reversal settlement. Retry required.',
+    created_at: '2026-09-04T14:00:00Z',
+    completed_at: null,
+  },
+  {
+    id: 'RFD-47610',
+    payment_id: 'PAY-47610',
+    order_id: 'ORD47610',
+    order_short_id: 'ORD47610',
+    customer_name: 'Anjali Gupta',
+    customer_phone: '+91 98765 11005',
+    amount: 120,
+    reason: 'Wrong item',
+    reason_note: 'Ordered chocolate brownie but received gulab jamun.',
+    refund_type: 'PARTIAL',
+    items_refunded: [{ name: 'Chocolate Brownie', quantity: 1, price: 120 }],
+    status: 'PENDING',
+    refund_reference: 'ICICI_RF_561289',
+    payment_method: 'UPI (PhonePe)',
+    original_amount: 490,
+    created_at: '2026-09-03T21:30:00Z',
+    completed_at: null,
+  },
+  {
+    id: 'RFD-47188',
+    payment_id: 'PAY-47188',
+    order_id: 'ORD47188',
+    order_short_id: 'ORD47188',
+    customer_name: 'Karan Mehta',
+    customer_phone: '+91 98765 11006',
+    amount: 50,
+    reason: 'Late delivery',
+    reason_note: 'Delivery fee refunded due to 45 min delay at wrong address.',
+    refund_type: 'PARTIAL',
+    items_refunded: [{ name: 'Delivery Charge Refund', quantity: 1, price: 50 }],
+    status: 'COMPLETED',
+    refund_reference: 'AXIS_RF_782390',
+    payment_method: 'Debit Card',
+    original_amount: 540,
+    created_at: '2026-09-02T13:45:00Z',
+    completed_at: '2026-09-02T14:00:00Z',
+  },
+];
+
+export const mockPayments: Payment[] = [
+  { payment_id: 'PAY-48231', order_id: 'ORD48231', payment_method: 'UPI (Google Pay)', amount: 620, status: 'PARTIALLY_REFUNDED', created_at: '2026-09-05T14:10:00Z' },
+  { payment_id: 'PAY-48198', order_id: 'ORD48198', payment_method: 'Credit Card (HDFC)', amount: 450, status: 'REFUND_PENDING', created_at: '2026-09-05T11:45:00Z' },
+  { payment_id: 'PAY-47902', order_id: 'ORD47902', payment_method: 'Paytm UPI', amount: 380, status: 'PARTIALLY_REFUNDED', created_at: '2026-09-04T19:15:00Z' },
+  { payment_id: 'PAY-47855', order_id: 'ORD47855', payment_method: 'Net Banking (SBI)', amount: 320, status: 'PAID', created_at: '2026-09-04T12:45:00Z' },
+  { payment_id: 'PAY-47610', order_id: 'ORD47610', payment_method: 'UPI (PhonePe)', amount: 490, status: 'REFUND_PENDING', created_at: '2026-09-03T20:20:00Z' },
+  { payment_id: 'PAY-47301', order_id: 'ORD47301', payment_method: 'UPI (Paytm)', amount: 330, status: 'PAID', created_at: '2026-09-02T19:40:00Z' },
+  { payment_id: 'PAY-47188', order_id: 'ORD47188', payment_method: 'Debit Card', amount: 540, status: 'PARTIALLY_REFUNDED', created_at: '2026-09-02T12:20:00Z' },
+  { payment_id: 'PAY-46902', order_id: 'ORD46902', payment_method: 'Credit Card (Axis)', amount: 360, status: 'PAID', created_at: '2026-09-01T13:15:00Z' },
+  { payment_id: 'PAY-48235', order_id: 'ORD48235', payment_method: 'UPI', amount: 620, status: 'PAID', created_at: '2026-09-06T14:30:00Z' },
+  { payment_id: 'PAY-48236', order_id: 'ORD48236', payment_method: 'Credit Card', amount: 444, status: 'PAID', created_at: '2026-09-06T14:15:00Z' },
 ];
 
 // ===== Offers mock data =====
@@ -716,7 +699,7 @@ export const analyticsCustomerBreakdown = analyticsCustomerBreakdownByRange.toda
 
 // ===== Notifications mock data =====
 
-export type NotificationType = 'NEW_ORDER' | 'PICKUP_ALERT' | 'SETTLEMENT' | 'COMPLAINT' | 'PLATFORM_ANNOUNCEMENT' | 'REVIEW';
+export type NotificationType = 'NEW_ORDER' | 'PICKUP_ALERT' | 'SETTLEMENT' | 'COMPLAINT' | 'PLATFORM_ANNOUNCEMENT' | 'REVIEW' | 'REFUND';
 
 export interface NotificationItem {
   id: string;
@@ -734,17 +717,8 @@ export const notificationTypeConfig: Record<NotificationType, { icon: string; bg
   COMPLAINT: { icon: 'AlertCircle', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-600 dark:text-red-400' },
   PLATFORM_ANNOUNCEMENT: { icon: 'Megaphone', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400' },
   REVIEW: { icon: 'Star', bg: 'bg-purple-50 dark:bg-purple-500/10', text: 'text-purple-600 dark:text-purple-400' },
+  REFUND: { icon: 'RotateCcw', bg: 'bg-orange-50 dark:bg-orange-500/10', text: 'text-orange-600 dark:text-orange-400' },
 };
 
-export const mockNotifications: NotificationItem[] = [
-  { id: 'n1', type: 'NEW_ORDER', title: 'New Order Received', message: 'Order ORD48235 from Priya Patel — 3 items, ₹620. Accept within 5 minutes.', isRead: false, createdAt: '2026-09-06T14:32:00' },
-  { id: 'n2', type: 'PICKUP_ALERT', title: 'Delivery Partner Arriving', message: 'Partner Ramesh K is arriving for order ORD48231. ETA 3 minutes.', isRead: false, createdAt: '2026-09-06T14:25:00' },
-  { id: 'n3', type: 'SETTLEMENT', title: 'Settlement Processed', message: '₹42,180 has been credited to your HDFC Bank account for Sep 4 settlements.', isRead: false, createdAt: '2026-09-06T10:00:00' },
-  { id: 'n4', type: 'COMPLAINT', title: 'New Complaint Filed', message: 'Customer Amit Kumar filed a complaint about order ORD48198 — Temperature issue.', isRead: false, createdAt: '2026-09-06T09:15:00' },
-  { id: 'n5', type: 'PLATFORM_ANNOUNCEMENT', title: 'Platform Maintenance', message: 'Scheduled maintenance on Sep 8, 2AM-4AM. Order processing may be briefly unavailable.', isRead: true, createdAt: '2026-09-05T18:00:00' },
-  { id: 'n6', type: 'REVIEW', title: 'New 5-Star Review', message: 'Priya Patel left a 5-star review: "Absolutely loved the biryani! Will order again."', isRead: true, createdAt: '2026-09-05T14:35:00' },
-  { id: 'n7', type: 'NEW_ORDER', title: 'New Order Received', message: 'Order ORD48198 from Amit Kumar — 2 items, ₹450. Accept within 5 minutes.', isRead: true, createdAt: '2026-09-05T12:18:00' },
-  { id: 'n8', type: 'SETTLEMENT', title: 'Settlement Processed', message: '₹38,940 has been credited to your HDFC Bank account for Sep 3 settlements.', isRead: true, createdAt: '2026-09-05T10:00:00' },
-  { id: 'n9', type: 'PICKUP_ALERT', title: 'Pickup Verification', message: 'Order ORD47902 is ready for pickup. OTP: 4521. Verify with the delivery partner.', isRead: true, createdAt: '2026-09-04T19:50:00' },
-  { id: 'n10', type: 'PLATFORM_ANNOUNCEMENT', title: 'New Feature: Analytics Dashboard', message: 'Track your restaurant performance with our new analytics tools. Now available in your dashboard.', isRead: true, createdAt: '2026-09-04T15:00:00' },
-];
+export const mockNotifications: NotificationItem[] = [];
+

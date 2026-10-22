@@ -1,7 +1,11 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Order, MenuItem, Category, ItemAvailability } from '@/data/mockData';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import {
+  MenuItem, Category, ItemAvailability,
+  Refund, Complaint, ComplaintType, ComplaintStatus,
+} from '@/data/mockData';
+import type { Order } from '@/types/order';
 import { Delivery, DeliveryStage } from '@/types/delivery';
 import {
   RegistrationStatus,
@@ -29,16 +33,30 @@ import {
   getValidAuthToken,
   apiGetOrder,
   apiGetOrders,
+  apiGetDelivery,
   apiAcceptOrder,
   apiRejectOrder,
   apiPreparingOrder,
   apiReadyOrder,
   mapBackendOrderToFrontend,
   apiGetDeliveries,
+  BackendDelivery,
   mapBackendDeliveryToFrontend,
+  apiGetComplaints,
+  apiUpdateComplaintStatus,
+  apiGetRefunds,
+  apiCreateComplaintRefund,
+  apiGetOrderSettings,
+  apiPauseOrders,
+  apiResumeOrders,
+  apiGetRestaurantAvailability,
+  apiGetUnreadNotificationCount,
+  OrderSettingsResponse,
+  PauseOrdersInput,
+  RestaurantAvailabilityResponse,
 } from '@/services/api';
 
-export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
+export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'refunds' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
 export type AuthView = 'login' | 'signup' | 'wizard' | 'status' | 'register';
 
 export interface OwnerSession {
@@ -53,6 +71,13 @@ export interface Toast {
   type: 'success' | 'error' | 'info' | 'warning';
   message: string;
   title?: string;
+}
+
+export interface RefundModalDefaults {
+  orderId?: string;
+  complaintId?: string;
+  suggestedAmount?: number;
+  defaultReason?: string;
 }
 
 interface AppState {
@@ -78,6 +103,16 @@ interface AppState {
   offlineUntil: Date | null;
   offlineReason: string;
   setOfflineReason: (r: string) => void;
+  orderSettings: OrderSettingsResponse | null;
+  isOrderSettingsLoading: boolean;
+  loadOrderSettings: () => Promise<OrderSettingsResponse | null>;
+  availability: RestaurantAvailabilityResponse | null;
+  isAvailabilityLoading: boolean;
+  loadAvailability: () => Promise<RestaurantAvailabilityResponse | null>;
+  pauseOnlineOrders: (payload: PauseOrdersInput) => Promise<boolean>;
+  resumeOnlineOrders: () => Promise<boolean>;
+  settingsInitialTab: 'profile' | 'hours' | 'status' | 'account' | 'payouts' | null;
+  setSettingsInitialTab: (tab: 'profile' | 'hours' | 'status' | 'account' | 'payouts' | null) => void;
   darkMode: boolean;
   toggleDarkMode: () => void;
   orders: Order[];
@@ -88,6 +123,7 @@ interface AppState {
   updateOrderStatus: (id: string, status: Order['status']) => Promise<void>;
   selectedOrderId: string | null;
   setSelectedOrderId: (id: string | null) => void;
+  viewOrder: (id: string) => void;
   menuItems: MenuItem[];
   updateMenuItem: (id: string, updates: Partial<MenuItem>) => void;
   updateMenuItemAvailability: (id: string, availability: ItemAvailability) => Promise<MenuItem>;
@@ -108,7 +144,39 @@ interface AppState {
   clearNewOrderCount: () => void;
   unreadNotificationCount: number;
   setUnreadNotificationCount: (n: number) => void;
+  loadUnreadNotificationCount: () => Promise<void>;
   addNotification: (n: { type: string; title: string; message: string }) => void;
+  // Shared Refunds & Complaints State
+  refunds: Refund[];
+  setRefunds: React.Dispatch<React.SetStateAction<Refund[]>>;
+  complaints: Complaint[];
+  setComplaints: React.Dispatch<React.SetStateAction<Complaint[]>>;
+  loadComplaints: () => Promise<void>;
+  loadRefunds: () => Promise<void>;
+  selectedRefundId: string | null;
+  setSelectedRefundId: (id: string | null) => void;
+  refundModalOpen: boolean;
+  refundModalDefaults: RefundModalDefaults | null;
+  openRefundModal: (defaults?: RefundModalDefaults) => void;
+  closeRefundModal: () => void;
+  createRefund: (params: {
+    orderId: string;
+    amount: number;
+    reason: string;
+    reasonNote?: string;
+    refundType: 'FULL' | 'PARTIAL';
+    complaintId?: string;
+    complaintResolution?: string;
+  }) => Promise<any>;
+  retryRefund: (refundId: string) => void;
+  viewRefund: (refundId: string) => void;
+  viewComplaint: (complaintId: string) => void;
+  highlightedComplaintId: string | null;
+  setHighlightedComplaintId: (id: string | null) => void;
+  updateComplaint: (id: string, updates: Partial<Complaint>) => void;
+  completedRefundsTotal: number;
+  pendingRefundsCount: number;
+  failedRefundsCount: number;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -131,6 +199,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isOnline, setIsOnline] = useState(true);
   const [offlineUntil, setOfflineUntil] = useState<Date | null>(null);
   const [offlineReason, setOfflineReason] = useState('');
+  const [orderSettings, setOrderSettings] = useState<OrderSettingsResponse | null>(null);
+  const [isOrderSettingsLoading, setIsOrderSettingsLoading] = useState(false);
+  const [availability, setAvailability] = useState<RestaurantAvailabilityResponse | null>(null);
+  const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'hours' | 'status' | 'account' | 'payouts' | null>(null);
   const [darkMode, setDarkMode] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -140,7 +213,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [newOrderCount, setNewOrderCount] = useState(0);
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(4);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+
+  // Shared Refunds & Complaints State
+  const [refunds, setRefunds] = useState<Refund[]>([]);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [selectedRefundId, setSelectedRefundId] = useState<string | null>(null);
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [refundModalDefaults, setRefundModalDefaults] = useState<RefundModalDefaults | null>(null);
+  const [highlightedComplaintId, setHighlightedComplaintId] = useState<string | null>(null);
 
   const addToast = useCallback((t: Omit<Toast, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -280,9 +361,114 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Update order status (with API call or local fallback)
+  // Load orders with associated delivery details from backend REST
+  const loadOrders = useCallback(async () => {
+    try {
+      const [res, deliveryRes] = await Promise.all([
+        apiGetOrders(),
+        apiGetDeliveries().catch(() => ({ deliveries: [] as BackendDelivery[], total: 0 })),
+      ]);
+      if (res && Array.isArray(res.orders)) {
+        const deliveriesByOrderId = new Map(
+          (deliveryRes.deliveries ?? []).map((delivery) => [delivery.order_id, delivery])
+        );
+        const mappedDb = res.orders.map((order) =>
+          mapBackendOrderToFrontend(order, deliveriesByOrderId.get(order.order_id))
+        );
+        setOrders(mappedDb);
+        const newCount = mappedDb.filter((o) => o.status === 'PLACED').length;
+        setNewOrderCount(newCount);
+      }
+    } catch (err) {
+      console.error("Failed to load orders:", err);
+    }
+  }, []);
+
+  const loadComplaints = useCallback(async () => {
+    try {
+      const res = await apiGetComplaints();
+      if (res && Array.isArray(res.items)) {
+        const seenIds = new Set<number>();
+        const uniqueItems = res.items.filter((bc) => {
+          if (seenIds.has(bc.complaint_id)) return false;
+          seenIds.add(bc.complaint_id);
+          return true;
+        });
+
+        const mapped: Complaint[] = uniqueItems.map((bc) => {
+          const orderIdStr = String(bc.order_id);
+          return {
+            id: String(bc.complaint_id),
+            order_id: orderIdStr,
+            orderShortId: `#ORD-${orderIdStr.padStart(4, '0')}`,
+            customerName: `Customer #${bc.customer_id}`,
+            type: (bc.category as ComplaintType) || 'OTHER',
+            description: bc.description,
+            status: (bc.status as ComplaintStatus) || 'OPEN',
+            createdAt: bc.created_at,
+            resolution: bc.resolution_note || bc.rejection_reason || null,
+            resolvedAt: bc.resolved_at || (bc.status === 'REJECTED' ? bc.updated_at : null) || null,
+          };
+        });
+        setComplaints(mapped);
+      }
+    } catch (err) {
+      console.error("Failed to load complaints:", err);
+    }
+  }, []);
+
+  const loadRefunds = useCallback(async () => {
+    try {
+      const res = await apiGetRefunds({ limit: 100, offset: 0 });
+
+      if (!res || !Array.isArray(res.items)) {
+        throw new Error('Invalid refund list response');
+      }
+
+      const mapped: Refund[] = res.items.map((refund) => ({
+        id: String(refund.refund_id),
+        payment_id: '',
+        order_id: String(refund.order_id),
+        order_short_id: `#ORD-${String(refund.order_id).padStart(4, '0')}`,
+        customer_name: 'Customer',
+        amount: Number(refund.amount),
+        reason: refund.reason || 'Refund request',
+        status: refund.status,
+        refund_reference: refund.execution_reference || '',
+        payment_method: refund.destination_method || '',
+        original_amount: 0,
+        refund_type: 'PARTIAL',
+        created_at: refund.created_at,
+        updated_at: refund.updated_at,
+        completed_at: refund.completed_at,
+        failed_reason: refund.failure_reason || undefined,
+        complaint_id: refund.complaint_id,
+        complaintId: refund.complaint_id
+          ? String(refund.complaint_id)
+          : null,
+      }));
+
+      setRefunds(mapped);
+    } catch (err) {
+      console.error('Failed to load refunds:', err);
+      throw err;
+    }
+  }, []);
+
+  // Load unread notification count from backend
+  const loadUnreadNotificationCount = useCallback(async () => {
+    try {
+      const res = await apiGetUnreadNotificationCount();
+      if (typeof res?.unread_count === 'number') {
+        setUnreadNotificationCount(res.unread_count);
+      }
+    } catch (err) {
+      console.warn('Failed to load unread notification count:', err);
+    }
+  }, []);
+
+  // Update order status with backend API call and state refresh
   const updateOrderStatus = useCallback(async (id: string, status: Order['status']) => {
-    // Map frontend action to backend API call
     const actionApiMap: Partial<Record<Order['status'], (orderId: string | number) => Promise<any>>> = {
       ACCEPTED: apiAcceptOrder,
       REJECTED: apiRejectOrder,
@@ -293,11 +479,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const apiFn = actionApiMap[status];
     if (apiFn) {
       try {
-        const backendOrder = await apiFn(id);
-        const mapped = mapBackendOrderToFrontend(backendOrder);
-        setOrders((prev) =>
-          prev.map((o) => (o.id === id ? mapped : o))
-        );
+        await apiFn(id);
+        // Refresh both orders and deliveries from the database
+        await Promise.all([loadOrders(), loadDeliveries()]);
         return;
       } catch (err) {
         console.error(`Failed to update order ${id} to ${status}:`, err);
@@ -305,7 +489,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Fallback for statuses without a backend API yet (local-only update)
+    // Fallback for statuses without a dedicated backend action endpoint
     setOrders((prev) =>
       prev.map((o) => {
         if (o.id !== id) return o;
@@ -325,13 +509,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return {
           ...o,
           status,
-          timeline: [...o.timeline, { status, timestamp: new Date().toISOString(), label: labelMap[status] }],
+          timeline: [...o.timeline, { status, timestamp: new Date().toISOString(), label: labelMap[status] || status }],
         };
       })
     );
-  }, []);
+  }, [loadOrders, loadDeliveries]);
 
-  // Real-time WebSocket connection for live orders and deliveries
+  // Real-time WebSocket connection listening to OrderListener events from backend
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -351,51 +535,75 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (isCancelled) return;
 
-        // Use the same origin as REST by default. This lets the browser send the
-        // HttpOnly authentication cookie through Next's /api rewrite. When an
-        // external API URL is configured, fall back to the short-lived token
-        // because browsers cannot attach custom headers to WebSocket handshakes.
-        const apiUrl = new URL(API_BASE_URL || window.location.origin, window.location.origin);
-        apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-        apiUrl.pathname = '/api/v1/ws/orders';
-        apiUrl.search = apiUrl.origin === window.location.origin
-          ? ''
-          : `?token=${encodeURIComponent(token)}`;
-        socket = new WebSocket(apiUrl.toString());
+        // Connect directly to the FastAPI WebSocket endpoint with auth token query param
+        const wsBase = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8000/api/v1/ws/orders';
+        const wsUrl = `${wsBase}${wsBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+        socket = new WebSocket(wsUrl);
 
         socket.onopen = () => {
-          console.log("CONNECTED");
+          console.log("[WS] Connected to live order & delivery listener");
+          loadUnreadNotificationCount();
         };
 
         socket.onmessage = async (event) => {
-          console.log("MESSAGE:", event.data);
+          console.log("[WS] Event received from OrderListener:", event.data);
           try {
             const data = JSON.parse(event.data);
             const eventType = data?.event;
 
-            if (eventType === "NEW_ORDER") {
-              const backendOrder = await apiGetOrder(data.order_id);
-              const mappedOrder = mapBackendOrderToFrontend(backendOrder);
-              setOrders((previousOrders) => [
-                mappedOrder,
-                ...previousOrders.filter((o) => o.id !== mappedOrder.id),
-              ]);
-              addToast({
-                type: "success",
-                title: "🔔 New Order Received!",
-                message: `Order ${mappedOrder.shortId} has been placed.`,
-              });
-              setNewOrderCount((prev) => prev + 1);
+            if (eventType === "AVAILABILITY_CHANGED") {
+              console.log("[WS] Availability changed:", data);
+              await loadAvailability();
+              return;
+            }
 
-              // Also refresh deliveries so the new order appears under WAITING_FOR_PARTNER
-              loadDeliveries();
+            if (eventType === "COMPLAINT_STATUS_CHANGED") {
+              console.log("[WS] Complaint status changed:", data);
+
+              await Promise.all([
+                loadComplaints(),
+                loadUnreadNotificationCount(),
+              ]);
+              window.dispatchEvent(new CustomEvent('restaurant:notification_event', { detail: data }));
+              return;
+            }
+
+            if (eventType === "NEW_ORDER") {
+              if (availability && !availability.is_accepting_orders) {
+                console.warn("[WS] Suppressed NEW_ORDER while restaurant is offline/paused");
+                return;
+              }
+
+              const [backendOrder, backendDelivery] = await Promise.all([
+                apiGetOrder(data.order_id).catch(() => null),
+                apiGetDelivery(data.order_id).catch(() => null),
+              ]);
+
+              if (backendOrder) {
+                const mappedOrder = mapBackendOrderToFrontend(backendOrder, backendDelivery || undefined);
+                setOrders((previousOrders) => [
+                  mappedOrder,
+                  ...previousOrders.filter((o) => o.id !== mappedOrder.id),
+                ]);
+                addToast({
+                  type: "success",
+                  title: "🔔 New Order Received!",
+                  message: `Order ${mappedOrder.shortId} has been placed.`,
+                });
+                setNewOrderCount((prev) => prev + 1);
+              }
+
+              // Also refresh deliveries and unread notifications
+              await Promise.all([
+                loadDeliveries(),
+                loadUnreadNotificationCount(),
+              ]);
+              window.dispatchEvent(new CustomEvent('restaurant:notification_event', { detail: data }));
               return;
             }
 
             // Delivery events
             const orderId = Number(data.order_id);
-            const assignmentId = data.assignment_id;
-            const status = data.status;
 
             const deliveryEventToastMap: Record<string, { title: string; message: string; type: 'info' | 'success' | 'warning' }> = {
               DELIVERY_PARTNER_ASSIGNED: {
@@ -445,82 +653,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
               addToast(toastCfg);
             }
 
-            // Map WebSocket event to frontend stage
-            let nextStage: DeliveryStage | null = null;
-            if (
-              eventType === "DELIVERY_PARTNER_ASSIGNED" ||
-              eventType === "DELIVERY_PARTNER_ACCEPTED" ||
-              eventType === "DELIVERY_PARTNER_REASSIGNED"
-            ) {
-              nextStage = "ASSIGNED";
-            } else if (eventType === "DELIVERY_PARTNER_ARRIVED") {
-              nextStage = "ARRIVED";
-            } else if (eventType === "ORDER_PICKED_UP") {
-              nextStage = "PICKED_UP";
-            } else if (eventType === "DELIVERY_PARTNER_ARRIVED_CUSTOMER") {
-              nextStage = "IN_TRANSIT";
-            } else if (eventType === "ORDER_DELIVERED") {
-              nextStage = "DELIVERED";
-            } else if (eventType === "DELIVERY_PARTNER_CANCELLED") {
-              nextStage = "WAITING_FOR_PARTNER";
-            }
-
-            if (nextStage) {
-              setDeliveries((prev) =>
-                prev.map((delivery) => {
-                  const sameOrder =
-                    String(delivery.orderId) === String(orderId);
-
-                  const sameAssignment =
-                    assignmentId &&
-                    String(delivery.assignmentId) === String(assignmentId);
-
-                  if (!sameOrder && !sameAssignment) {
-                    return delivery;
-                  }
-
-                  return {
-                    ...delivery,
-                    stage: nextStage,
-                    ...(status ? { assignmentStatus: status } : {}),
-                    ...(assignmentId
-                      ? { assignmentId: Number(assignmentId) }
-                      : {}),
-                    ...(nextStage === "DELIVERED"
-                      ? { etaMinutes: 0 }
-                      : {}),
-                  };
-                })
-              );
-
-              // Keep Orders page synchronized
-              if (eventType === "ORDER_PICKED_UP") {
-                setOrders((prev) =>
-                  prev.map((order) =>
-                    String(order.id) === String(orderId)
-                      ? { ...order, status: "PICKED_UP" }
-                      : order
-                  )
-                );
-              }
-
-              if (eventType === "ORDER_DELIVERED") {
-                setOrders((prev) =>
-                  prev.map((order) =>
-                    String(order.id) === String(orderId)
-                      ? { ...order, status: "DELIVERED" }
-                      : order
-                  )
-                );
-              }
-            }
+            // Synchronize authoritative state from database for deliveries, orders, and notifications
+            await Promise.all([
+              loadDeliveries(),
+              loadOrders(),
+              loadUnreadNotificationCount(),
+            ]);
+            window.dispatchEvent(new CustomEvent('restaurant:notification_event', { detail: data }));
           } catch (err) {
-            console.error("Error processing websocket order:", err);
+            console.error("Error processing websocket event:", err);
           }
         };
 
         socket.onclose = (event) => {
-          console.log("CLOSED:", event.code);
+          console.log("[WS] Disconnected:", event.code);
           if (isCancelled) return;
           if (event.code !== 1000) {
             reconnectTimeout = setTimeout(connectWs, 3000);
@@ -528,7 +674,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         socket.onerror = (err) => {
-          console.error("WebSocket error:", err);
+          console.error("[WS] WebSocket error:", err);
         };
       } catch (err) {
         console.error("Failed to establish WebSocket:", err);
@@ -547,7 +693,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         socket.close(1000);
       }
     };
-  }, [isAuthenticated, addToast, loadDeliveries, updateOrderStatus]);
+  }, [isAuthenticated, addToast, loadDeliveries, loadOrders, loadComplaints, loadUnreadNotificationCount]);
 
   // Silent token refresh using backend /api/v1/auth/refresh
   const refreshToken = useCallback(async () => {
@@ -565,7 +711,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...prev,
       status,
       application_id: prev?.application_id || 'APP-782941',
-      restaurant_name: prev?.restaurant_name || 'Narayani Kitchen',
+      restaurant_name: prev?.restaurant_name || 'Vigo Feast Restaurant',
       rejection_reason:
         status === 'REJECTED'
           ? 'FSSAI certificate expired and business PAN name mismatch. Please re-upload verified documents.'
@@ -643,7 +789,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addToast({
           type: 'success',
           title: 'Welcome back!',
-          message: 'Logged in to Narayani Partner Dashboard',
+          message: 'Logged in to Vigo Feast Partner Dashboard',
         });
       } else if (effectiveStatus === 'NOT_STARTED') {
         setIsAuthenticated(false);
@@ -667,7 +813,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentPage('dashboard');
     addToast({
       type: 'success',
-      title: 'Welcome to Narayani Partner!',
+      title: 'Welcome to Vigo Feast Partner!',
       message: 'Your restaurant has been verified.',
     });
   }, [addToast]);
@@ -727,37 +873,139 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [addToast]
   );
 
-  const toggleOnline = useCallback(() => {
-    setIsOnline((prev) => {
-      const next = !prev;
-      if (next) {
-        setOfflineUntil(null);
-        setOfflineReason('');
-        addToast({ type: 'success', title: "You're online", message: 'Receiving new orders' });
+  const loadAvailability = useCallback(async (): Promise<RestaurantAvailabilityResponse | null> => {
+    setIsAvailabilityLoading(true);
+    try {
+      const data = await apiGetRestaurantAvailability();
+      setAvailability(data);
+      setIsOnline(data.is_accepting_orders);
+      if (data.is_paused) {
+        setOfflineUntil(data.paused_until ? new Date(data.paused_until) : null);
+        setOfflineReason(data.reason);
       } else {
-        addToast({ type: 'info', title: "You're offline", message: 'Not receiving new orders' });
+        setOfflineUntil(null);
+        setOfflineReason(data.status === 'OFFLINE' ? data.reason : '');
       }
-      return next;
-    });
-  }, [addToast]);
+      return data;
+    } catch (err) {
+      console.warn('Could not load restaurant availability:', err);
+      return null;
+    } finally {
+      setIsAvailabilityLoading(false);
+    }
+  }, []);
+
+  const loadOrderSettings = useCallback(async (): Promise<OrderSettingsResponse | null> => {
+    setIsOrderSettingsLoading(true);
+    try {
+      const data = await apiGetOrderSettings();
+      setOrderSettings(data);
+      void loadAvailability();
+      return data;
+    } catch (err) {
+      console.warn('Could not load order settings:', err);
+      return null;
+    } finally {
+      setIsOrderSettingsLoading(false);
+    }
+  }, [loadAvailability]);
+
+  const pauseOnlineOrders = useCallback(
+    async (payload: PauseOrdersInput): Promise<boolean> => {
+      setIsOrderSettingsLoading(true);
+      try {
+        const data = await apiPauseOrders(payload);
+        setOrderSettings(data);
+        await loadAvailability();
+        addToast({
+          type: 'info',
+          title: 'Orders Paused',
+          message: payload.reason || 'Online ordering is temporarily paused.',
+        });
+        return true;
+      } catch (err: any) {
+        addToast({
+          type: 'error',
+          title: 'Pause Failed',
+          message: err?.message || 'Could not pause orders.',
+        });
+        return false;
+      } finally {
+        setIsOrderSettingsLoading(false);
+      }
+    },
+    [addToast, loadAvailability]
+  );
+
+  const resumeOnlineOrders = useCallback(async (): Promise<boolean> => {
+    setIsOrderSettingsLoading(true);
+    try {
+      const data = await apiResumeOrders();
+      setOrderSettings(data);
+      const avail = await loadAvailability();
+      const isAccepting = avail?.is_accepting_orders ?? false;
+      addToast({
+        type: isAccepting ? 'success' : 'info',
+        title: isAccepting ? 'Orders Resumed' : 'Pause Lifted',
+        message: isAccepting
+          ? 'You are now accepting online orders.'
+          : 'Pause cleared, but store is currently offline based on schedule.',
+      });
+      return true;
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Resume Failed',
+        message: err?.message || 'Could not resume orders.',
+      });
+      return false;
+    } finally {
+      setIsOrderSettingsLoading(false);
+    }
+  }, [addToast, loadAvailability]);
+
+
+  const toggleOnline = useCallback(() => {
+    if (orderSettings?.is_paused) {
+      void resumeOnlineOrders();
+    } else {
+      // Toggle pause: compute 60 min by default if clicked directly
+      const now = new Date();
+      const until = new Date(now.getTime() + 60 * 60 * 1000);
+      void pauseOnlineOrders({ reason: offlineReason || null, paused_until: until.toISOString() });
+    }
+  }, [orderSettings, offlineReason, resumeOnlineOrders, pauseOnlineOrders]);
 
   const goOfflineFor = useCallback(
     (minutes: number) => {
-      setIsOnline(false);
-      if (minutes > 0) {
-        const until = new Date(Date.now() + minutes * 60000);
-        setOfflineUntil(until);
-        addToast({
-          type: 'info',
-          title: `Offline for ${minutes < 60 ? minutes + 'm' : minutes / 60 + 'h'}`,
-          message: 'Auto-resuming later',
+      const now = new Date();
+      let paused_until: string;
+      if (minutes === 0) {
+        // Rest of day in IST
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
         });
+        const istDateStr = formatter.format(now);
+        paused_until = `${istDateStr}T23:59:59+05:30`;
       } else {
-        setOfflineUntil(null);
-        addToast({ type: 'info', title: 'Offline for rest of day', message: 'Resumes tomorrow' });
+        const targetDate = new Date(now.getTime() + minutes * 60 * 1000);
+        const istOffsetMs = 5.5 * 60 * 60 * 1000;
+        const istTime = new Date(targetDate.getTime() + istOffsetMs);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const y = istTime.getUTCFullYear();
+        const m = pad(istTime.getUTCMonth() + 1);
+        const d = pad(istTime.getUTCDate());
+        const h = pad(istTime.getUTCHours());
+        const min = pad(istTime.getUTCMinutes());
+        const s = pad(istTime.getUTCSeconds());
+        paused_until = `${y}-${m}-${d}T${h}:${min}:${s}+05:30`;
       }
+      void pauseOnlineOrders({ reason: offlineReason || null, paused_until });
     },
-    [addToast]
+    [offlineReason, pauseOnlineOrders]
   );
 
   const addOrder = useCallback((o: Order) => {
@@ -882,27 +1130,204 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [categories]
   );
 
-  const loadOrders = useCallback(async () => {
-    try {
-      const res = await apiGetOrders();
-      if (res && Array.isArray(res.orders)) {
-        const mappedDb = res.orders.map(mapBackendOrderToFrontend);
-        setOrders(mappedDb);
-        const newCount = mappedDb.filter((o) => o.status === 'PLACED').length;
-        setNewOrderCount(newCount);
-      }
-    } catch (err) {
-      console.error("Failed to load orders:", err);
-    }
+  const viewOrder = useCallback((id: string) => {
+    setSelectedOrderId(id);
+    setCurrentPage('orders');
+  }, []);
+
+  const openRefundModal = useCallback((defaults?: RefundModalDefaults) => {
+    setRefundModalDefaults(defaults || null);
+    setRefundModalOpen(true);
+  }, []);
+
+  const closeRefundModal = useCallback(() => {
+    setRefundModalOpen(false);
+    setRefundModalDefaults(null);
   }, []);
 
   useEffect(() => {
+    const handleComplaintStatusChanged = () => {
+      void loadComplaints();
+    };
+
+    window.addEventListener(
+      "complaint-status-changed",
+      handleComplaintStatusChanged
+    );
+
+    return () => {
+      window.removeEventListener(
+        "complaint-status-changed",
+        handleComplaintStatusChanged
+      );
+    };
+  }, [loadComplaints]);
+
+  const updateComplaint = useCallback(
+    async (id: string, updates: Partial<Complaint>) => {
+      // Optimistically update local state
+      setComplaints((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+      );
+
+      try {
+        if (updates.status && ['UNDER_REVIEW', 'RESOLVED', 'REJECTED'].includes(updates.status)) {
+          await apiUpdateComplaintStatus(id, {
+            status: updates.status as 'UNDER_REVIEW' | 'RESOLVED' | 'REJECTED',
+            note: updates.resolution || undefined,
+          });
+          await loadComplaints();
+        }
+      } catch (err) {
+        console.error(`Failed to update complaint ${id}:`, err);
+        await loadComplaints();
+        throw err;
+      }
+    },
+    [loadComplaints]
+  );
+
+  const addNotification = useCallback(
+    (n: { type: string; title: string; message: string }) => {
+      setUnreadNotificationCount((p) => p + 1);
+      addToast({ type: 'info', title: n.title, message: n.message });
+    },
+    [addToast]
+  );
+
+  const createRefund = useCallback(
+    async ({
+      amount,
+      reason,
+      reasonNote,
+      complaintId,
+    }: {
+      orderId: string;
+      amount: number;
+      reason: string;
+      reasonNote?: string;
+      refundType: 'FULL' | 'PARTIAL';
+      complaintId?: string;
+      complaintResolution?: string;
+    }) => {
+      if (!complaintId) {
+        throw new Error('A resolved complaint ID is required to create a refund.');
+      }
+      const combinedReason = [reason.trim(), reasonNote?.trim()]
+        .filter(Boolean)
+        .join(' — ')
+        .slice(0, 255);
+
+      const res = await apiCreateComplaintRefund(Number(complaintId), {
+        amount,
+        reason: combinedReason,
+        destination_method: 'ORIGINAL_PAYMENT_METHOD',
+        idempotency_key: crypto.randomUUID(),
+      });
+
+      await loadRefunds();
+      return res;
+    },
+    [loadRefunds]
+  );
+
+  const retryRefund = useCallback(
+    (_refundId: string) => {
+      addToast({
+        type: 'warning',
+        title: 'Retry Unavailable',
+        message: 'Refund execution integration is not available. Real payment gateway re-execution cannot be triggered.',
+      });
+    },
+    [addToast]
+  );
+
+  const viewRefund = useCallback((refundId: string) => {
+    setSelectedRefundId(refundId);
+    setCurrentPage('refunds');
+  }, []);
+
+  const viewComplaint = useCallback((complaintId: string) => {
+    setHighlightedComplaintId(complaintId);
+    setCurrentPage('reviews');
+  }, []);
+
+  // Computed totals for statistics
+  const completedRefundsTotal = useMemo(
+    () =>
+      refunds
+        .filter((r) => r.status === 'COMPLETED')
+        .reduce((sum, r) => sum + Number(r.amount || 0), 0),
+    [refunds]
+  );
+
+  const pendingRefundsCount = useMemo(
+    () => refunds.filter((r) => r.status === 'PENDING').length,
+    [refunds]
+  );
+
+  const failedRefundsCount = useMemo(
+    () => refunds.filter((r) => r.status === 'FAILED').length,
+    [refunds]
+  );
+
+  useEffect(() => {
     if (isAuthenticated) {
-      loadCategories();
-      loadOrders();
-      loadDeliveries();
+      void loadCategories();
+      void loadOrders();
+      void loadDeliveries();
+      void loadComplaints();
+      void loadRefunds();
+      void loadOrderSettings();
+      void loadAvailability();
     }
-  }, [isAuthenticated, loadCategories, loadOrders, loadDeliveries]);
+  }, [
+    isAuthenticated,
+    loadCategories,
+    loadOrders,
+    loadDeliveries,
+    loadComplaints,
+    loadRefunds,
+    loadOrderSettings,
+    loadAvailability,
+  ]);
+
+  // Boundary timer: automatically refetch when next_change_at boundary occurs
+  useEffect(() => {
+    if (!availability?.next_change_at) return;
+    const changeTime = new Date(availability.next_change_at).getTime();
+    const delay = changeTime - Date.now() + 1000; // 1s buffer
+    if (delay <= 0) {
+      void loadAvailability();
+      return;
+    }
+    if (delay < 24 * 60 * 60 * 1000) {
+      const timer = setTimeout(() => {
+        void loadAvailability();
+      }, delay);
+      return () => clearTimeout(timer);
+    }
+  }, [availability?.next_change_at, loadAvailability]);
+
+  // Periodic poll fallback every 60 seconds
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = setInterval(() => {
+      void loadAvailability();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, loadAvailability]);
+
+  // Refresh on window focus
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const onFocus = () => {
+      void loadAvailability();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [isAuthenticated, loadAvailability]);
+
 
   const addCategory = useCallback(
     async (name: string, visible: boolean = true): Promise<Category> => {
@@ -940,13 +1365,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toggleDarkMode = useCallback(() => setDarkMode((p) => !p), []);
   const toggleSound = useCallback(() => setSoundEnabled((p) => !p), []);
   const clearNewOrderCount = useCallback(() => setNewOrderCount(0), []);
-  const addNotification = useCallback(
-    (n: { type: string; title: string; message: string }) => {
-      setUnreadNotificationCount((p) => p + 1);
-      addToast({ type: 'info', title: n.title, message: n.message });
-    },
-    [addToast]
-  );
 
   const setPage = useCallback((p: Page) => {
     setCurrentPage(p);
@@ -978,6 +1396,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         offlineUntil,
         offlineReason,
         setOfflineReason,
+        orderSettings,
+        isOrderSettingsLoading,
+        loadOrderSettings,
+        availability,
+        isAvailabilityLoading,
+        loadAvailability,
+        pauseOnlineOrders,
+        resumeOnlineOrders,
+        settingsInitialTab,
+        setSettingsInitialTab,
         darkMode,
         toggleDarkMode,
         orders,
@@ -988,6 +1416,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateOrderStatus,
         selectedOrderId,
         setSelectedOrderId,
+        viewOrder,
         menuItems,
         updateMenuItem,
         updateMenuItemAvailability,
@@ -1008,7 +1437,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
         clearNewOrderCount,
         unreadNotificationCount,
         setUnreadNotificationCount,
+        loadUnreadNotificationCount,
         addNotification,
+        // Shared Refunds & Complaints State
+        refunds,
+        setRefunds,
+        complaints,
+        setComplaints,
+        loadComplaints,
+        loadRefunds,
+        selectedRefundId,
+        setSelectedRefundId,
+        refundModalOpen,
+        refundModalDefaults,
+        openRefundModal,
+        closeRefundModal,
+        createRefund,
+        retryRefund,
+        viewRefund,
+        viewComplaint,
+        highlightedComplaintId,
+        setHighlightedComplaintId,
+        updateComplaint,
+        completedRefundsTotal,
+        pendingRefundsCount,
+        failedRefundsCount,
       }}
     >
       {children}

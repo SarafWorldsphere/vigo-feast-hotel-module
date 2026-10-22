@@ -232,25 +232,25 @@ export function RegisterPage() {
       documents: [
         {
           document_type: 'FSSAI_CERTIFICATE',
-          file_url: 'https://storage.narayani.com/docs/fssai_certificate.pdf',
+          file_url: 'https://storage.vigofeast.com/docs/fssai_certificate.pdf',
           file_name: 'fssai_certificate.pdf',
           mime_type: 'application/pdf',
         },
         {
           document_type: 'PAN_CARD',
-          file_url: 'https://storage.narayani.com/docs/pan_card.jpg',
+          file_url: 'https://storage.vigofeast.com/docs/pan_card.jpg',
           file_name: 'pan_card.jpg',
           mime_type: 'image/jpeg',
         },
         {
           document_type: 'BANK_PROOF',
-          file_url: 'https://storage.narayani.com/docs/cancelled_cheque.pdf',
+          file_url: 'https://storage.vigofeast.com/docs/cancelled_cheque.pdf',
           file_name: 'cancelled_cheque.pdf',
           mime_type: 'application/pdf',
         },
         {
           document_type: 'RESTAURANT_PHOTO',
-          file_url: 'https://storage.narayani.com/docs/restaurant_photo.jpg',
+          file_url: 'https://storage.vigofeast.com/docs/restaurant_photo.jpg',
           file_name: 'restaurant_photo.jpg',
           mime_type: 'image/jpeg',
         },
@@ -289,7 +289,7 @@ export function RegisterPage() {
       </button>
 
       <div className="relative w-full max-w-xl animate-slide-up flex flex-col max-h-[calc(100vh-4rem)]">
-        {/* Header with Narayani logo mark */}
+        {/* Header with Vigo Feast logo mark */}
         <div className="flex flex-col items-center mb-4 text-center">
           <div className="w-14 h-14 rounded-2xl bg-brand-500 flex items-center justify-center shadow-elevated mb-2">
             <ChefHat className="w-8 h-8 text-white" />
@@ -383,7 +383,7 @@ export function RegisterPage() {
                     className="input mt-1"
                     value={data.restaurantName}
                     onChange={(e) => update('restaurantName', e.target.value)}
-                    placeholder="e.g. Narayani Kitchen & Sweets"
+                    placeholder="e.g. Vigo Feast Restaurant & Sweets"
                     autoFocus
                   />
                 </div>
@@ -515,7 +515,7 @@ export function RegisterPage() {
                       className="input mt-1"
                       value={data.upiId}
                       onChange={(e) => update('upiId', e.target.value)}
-                      placeholder="narayani@hdfcbank"
+                      placeholder="vigofeast@hdfcbank"
                     />
                   </div>
                 </div>

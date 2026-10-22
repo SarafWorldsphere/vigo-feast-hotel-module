@@ -1,8 +1,8 @@
 import { useApp, Page } from '@/context/AppContext';
 import {
-  LayoutDashboard, ShoppingBag, UtensilsCrossed, Truck, Wallet,
+  LayoutDashboard, ShoppingBag, UtensilsCrossed, Truck, Wallet, RotateCcw,
   BarChart3, Tag, Star, Bell, Settings, ChefHat, Moon, Sun,
-  Volume2, VolumeX, MoreHorizontal, LogOut,
+  MoreHorizontal, LogOut,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -12,6 +12,7 @@ const navItems: { id: Page; label: string; icon: typeof LayoutDashboard; enabled
   { id: 'menu', label: 'Menu', icon: UtensilsCrossed, enabled: true },
   { id: 'delivery', label: 'Delivery', icon: Truck, enabled: true },
   { id: 'earnings', label: 'Earnings', icon: Wallet, enabled: true },
+  { id: 'refunds', label: 'Refunds', icon: RotateCcw, enabled: true },
   { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: true },
   { id: 'offers', label: 'Offers', icon: Tag, enabled: true },
   { id: 'reviews', label: 'Reviews', icon: Star, enabled: true },
@@ -20,7 +21,7 @@ const navItems: { id: Page; label: string; icon: typeof LayoutDashboard; enabled
 ];
 
 export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
-  const { currentPage, setPage, darkMode, toggleDarkMode, soundEnabled, toggleSound, newOrderCount, logout } = useApp();
+  const { currentPage, setPage, darkMode, toggleDarkMode, newOrderCount, logout } = useApp();
   const [tooltip, setTooltip] = useState<string | null>(null);
 
   const handleNav = (item: typeof navItems[0]) => {
@@ -38,7 +39,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
         </div>
         {!collapsed && (
           <div className="overflow-hidden">
-            <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">NARAYANI</p>
+            <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">VIGO FEAST</p>
             <p className="text-xs text-gray-400 dark:text-gray-500">Partner Dashboard</p>
           </div>
         )}
@@ -93,13 +94,6 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       {/* Footer controls */}
       <div className="p-3 border-t border-gray-200 dark:border-gray-800 space-y-1 shrink-0">
         <button
-          onClick={toggleSound}
-          className={`nav-item w-full ${collapsed ? 'justify-center' : ''} nav-item-inactive`}
-        >
-          {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-          {!collapsed && <span>{soundEnabled ? 'Sound On' : 'Sound Off'}</span>}
-        </button>
-        <button
           onClick={toggleDarkMode}
           className={`nav-item w-full ${collapsed ? 'justify-center' : ''} nav-item-inactive`}
         >
@@ -123,8 +117,8 @@ const bottomNavItems: { id: Page | 'more'; label: string; icon: typeof LayoutDas
   { id: 'dashboard', label: 'Home', icon: LayoutDashboard, enabled: true },
   { id: 'orders', label: 'Orders', icon: ShoppingBag, enabled: true },
   { id: 'menu', label: 'Menu', icon: UtensilsCrossed, enabled: true },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: true },
   { id: 'earnings', label: 'Earnings', icon: Wallet, enabled: true },
+  { id: 'more', label: 'More', icon: MoreHorizontal, enabled: true },
 ];
 
 export function BottomNav({ onMoreClick }: { onMoreClick?: () => void }) {

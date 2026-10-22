@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { dashboardStats } from '@/data/mockData';
+import { useDashboard } from '@/hooks/useDashboard';
 import { CountUp } from '@/components/ui/CountUp';
 import { PageSkeleton } from '@/components/ui/Skeletons';
 import { FoodImage } from '@/components/ui/FoodImage';
@@ -10,14 +10,9 @@ import {
 } from 'lucide-react';
 
 export function DashboardPage() {
-  const { setPage, isOnline, registrationStatus, statusDetails, owner } = useApp();
-  const [loading, setLoading] = useState(true);
+  const { setPage, isOnline, registrationStatus, statusDetails, owner, pendingRefundsCount, failedRefundsCount } = useApp();
+  const { dashboard, isLoading } = useDashboard();
   const [showApprovedBanner, setShowApprovedBanner] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
-  }, []);
 
   // Check if banner was already dismissed forever or if the approval is fresh
   useEffect(() => {
@@ -53,7 +48,6 @@ export function DashboardPage() {
       }
 
       // 3. If reviewed_at or submitted_at exists, verify if it was within the last 48 hours
-      // (If the restaurant was registered & approved a month ago, do not display the banner)
       const timestamp = statusDetails?.reviewed_at || statusDetails?.submitted_at;
       if (timestamp) {
         const approvedTime = new Date(timestamp).getTime();
@@ -65,7 +59,6 @@ export function DashboardPage() {
           }
         }
       } else {
-        // If there's no fresh approval trigger and no recent timestamp, do not show by default
         setShowApprovedBanner(false);
         return;
       }
@@ -104,23 +97,97 @@ export function DashboardPage() {
     }
   };
 
-  if (loading) return <PageSkeleton />;
+  if (isLoading) return <PageSkeleton />;
 
-  const stats = dashboardStats;
+  // ── Live data (with safe fallbacks while API data loads) ──────────────────
+  const summary = dashboard?.summary;
+  const salesTrend = dashboard?.sales_trend;
+  const orderPipeline = dashboard?.order_pipeline;
+  const topItems = dashboard?.top_selling_items ?? [];
 
   const statCards = [
-    { label: "Today's Orders", value: stats.todayOrders, icon: ShoppingBag, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', change: '+12%', up: true },
-    { label: 'Gross Revenue', value: stats.grossRevenue, prefix: '₹', icon: IndianRupee, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-500/10', change: '+8%', up: true },
-    { label: 'Avg Order Value', value: stats.avgOrderValue, prefix: '₹', icon: TrendingUp, color: 'text-brand-600 dark:text-brand-400', bg: 'bg-brand-50 dark:bg-brand-500/10', change: '+3%', up: true },
-    { label: 'Rating', value: stats.rating, decimals: 1, suffix: '', icon: Star, color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-500/10', change: '+0.2', up: true },
+    {
+      label: "Today's Orders",
+      value: summary?.today_orders ?? 0,
+      icon: ShoppingBag,
+      color: 'text-blue-600 dark:text-blue-400',
+      bg: 'bg-blue-50 dark:bg-blue-500/10',
+      change: salesTrend?.change_percentage != null
+        ? `${salesTrend.change_percentage >= 0 ? '+' : ''}${salesTrend.change_percentage.toFixed(1)}%`
+        : '—',
+      up: (salesTrend?.change_percentage ?? 0) >= 0,
+    },
+    {
+      label: 'Gross Revenue',
+      value: summary?.gross_revenue ?? 0,
+      prefix: '₹',
+      icon: IndianRupee,
+      color: 'text-emerald-600 dark:text-emerald-400',
+      bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+      change: salesTrend?.change_percentage != null
+        ? `${salesTrend.change_percentage >= 0 ? '+' : ''}${salesTrend.change_percentage.toFixed(1)}%`
+        : '—',
+      up: (salesTrend?.change_percentage ?? 0) >= 0,
+    },
+    {
+      label: 'Avg Order Value',
+      value: summary?.average_order_value ?? 0,
+      prefix: '₹',
+      icon: TrendingUp,
+      color: 'text-brand-600 dark:text-brand-400',
+      bg: 'bg-brand-50 dark:bg-brand-500/10',
+      change: '—',
+      up: true,
+    },
+    {
+      label: 'Rating',
+      value: summary?.rating ?? 0,
+      decimals: 1,
+      suffix: '',
+      icon: Star,
+      color: 'text-amber-600 dark:text-amber-400',
+      bg: 'bg-amber-50 dark:bg-amber-500/10',
+      change: '—',
+      up: true,
+    },
   ];
 
   const pipeline = [
-    { label: 'New', count: stats.pipeline.NEW, color: 'bg-blue-500', textColor: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10' },
-    { label: 'Preparing', count: stats.pipeline.PREPARING, color: 'bg-amber-500', textColor: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-500/10' },
-    { label: 'Ready', count: stats.pipeline.READY, color: 'bg-purple-500', textColor: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-500/10' },
-    { label: 'Completed', count: stats.pipeline.COMPLETED, color: 'bg-emerald-500', textColor: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
-    { label: 'Rejected', count: stats.pipeline.REJECTED, color: 'bg-red-500', textColor: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10' },
+    {
+      label: 'New',
+      count: orderPipeline?.new ?? 0,
+      color: 'bg-blue-500',
+      textColor: 'text-blue-600 dark:text-blue-400',
+      bg: 'bg-blue-50 dark:bg-blue-500/10',
+    },
+    {
+      label: 'Preparing',
+      count: orderPipeline?.preparing ?? 0,
+      color: 'bg-amber-500',
+      textColor: 'text-amber-600 dark:text-amber-400',
+      bg: 'bg-amber-50 dark:bg-amber-500/10',
+    },
+    {
+      label: 'Ready',
+      count: orderPipeline?.ready ?? 0,
+      color: 'bg-purple-500',
+      textColor: 'text-purple-600 dark:text-purple-400',
+      bg: 'bg-purple-50 dark:bg-purple-500/10',
+    },
+    {
+      label: 'Completed',
+      count: orderPipeline?.completed ?? 0,
+      color: 'bg-emerald-500',
+      textColor: 'text-emerald-600 dark:text-emerald-400',
+      bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    },
+    {
+      label: 'Rejected',
+      count: orderPipeline?.rejected ?? 0,
+      color: 'bg-red-500',
+      textColor: 'text-red-600 dark:text-red-400',
+      bg: 'bg-red-50 dark:bg-red-500/10',
+    },
   ];
 
   const alertIcons = {
@@ -129,6 +196,37 @@ export function DashboardPage() {
     info: { icon: Info, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-500/10' },
     success: { icon: CheckCircle, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
   };
+
+  // Static alerts — replace with a real alerts API when available
+  // Alerts panel items including real-time pending/failed refund notifications
+  const alerts = [
+    ...(failedRefundsCount > 0
+      ? [
+          {
+            type: 'warning',
+            message: `${failedRefundsCount} refund${failedRefundsCount > 1 ? 's' : ''} failed gateway processing — retry required`,
+            time: 'Action needed',
+          },
+        ]
+      : []),
+    ...(pendingRefundsCount > 0
+      ? [
+          {
+            type: 'info',
+            message: `${pendingRefundsCount} refund request${pendingRefundsCount > 1 ? 's' : ''} awaiting gateway processing`,
+            time: 'Pending review',
+          },
+        ]
+      : []),
+    { type: 'info', message: 'Dashboard data is now live from the API', time: 'Just now' },
+  ];
+
+  // Change badge label for the Sales Trend card
+  const changePct = salesTrend?.change_percentage;
+  const changeBadge =
+    changePct != null
+      ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}% vs yesterday`
+      : 'vs yesterday';
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -204,10 +302,15 @@ export function DashboardPage() {
       {/* Secondary stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
         {[
-          { label: 'Net Revenue', value: stats.netRevenue, prefix: '₹', icon: IndianRupee },
-          { label: 'Avg Prep Time', value: stats.avgPrepTime, suffix: ' min', icon: Clock },
-          { label: 'Acceptance Rate', value: stats.acceptanceRate, suffix: '%', icon: CheckCircle2 },
-          { label: 'Cancellation Rate', value: stats.cancellationRate, suffix: '%', icon: XCircle },
+          { label: 'Net Revenue', value: summary?.net_revenue ?? 0, prefix: '₹', icon: IndianRupee },
+          {
+            label: 'Avg Prep Time',
+            value: summary?.average_preparation_time ?? 0,
+            suffix: summary?.average_preparation_time != null ? ' min' : '',
+            icon: Clock,
+          },
+          { label: 'Acceptance Rate', value: summary?.acceptance_rate ?? 0, suffix: '%', icon: CheckCircle2 },
+          { label: 'Cancellation Rate', value: summary?.cancellation_rate ?? 0, suffix: '%', icon: XCircle },
         ].map((s, i) => {
           const Icon = s.icon;
           return (
@@ -217,12 +320,16 @@ export function DashboardPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-gray-400 dark:text-gray-500">{s.label}</p>
-                <CountUp
-                  value={s.value}
-                  prefix={s.prefix}
-                  suffix={s.suffix}
-                  className="text-lg font-bold text-gray-900 dark:text-white"
-                />
+                {s.label === 'Avg Prep Time' && summary?.average_preparation_time == null ? (
+                  <p className="text-lg font-bold text-gray-400 dark:text-gray-600">—</p>
+                ) : (
+                  <CountUp
+                    value={s.value}
+                    prefix={s.prefix}
+                    suffix={s.suffix}
+                    className="text-lg font-bold text-gray-900 dark:text-white"
+                  />
+                )}
               </div>
             </div>
           );
@@ -238,12 +345,14 @@ export function DashboardPage() {
               <h3 className="font-semibold text-sm text-gray-900 dark:text-white">Sales Trend</h3>
               <p className="text-xs text-gray-400 dark:text-gray-500">Hourly revenue today</p>
             </div>
-            <span className="badge bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
-              <ArrowUpRight className="w-3 h-3" />
-              +12% vs yesterday
-            </span>
+            {changePct != null && (
+              <span className={`badge ${changePct >= 0 ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                <ArrowUpRight className="w-3 h-3" />
+                {changeBadge}
+              </span>
+            )}
           </div>
-          <SalesChart data={stats.salesTrend} />
+          <SalesChart data={salesTrend?.hourly ?? []} />
         </div>
 
         {/* Pipeline */}
@@ -251,8 +360,8 @@ export function DashboardPage() {
           <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-4">Order Pipeline</h3>
           <div className="space-y-2.5">
             {pipeline.map((p, i) => {
-              const max = Math.max(...pipeline.map(x => x.count));
-              const pct = max > 0 ? (p.count / max) * 100 : 0;
+              const max = Math.max(...pipeline.map(x => x.count), 1);
+              const pct = (p.count / max) * 100;
               return (
                 <div key={i} className="group">
                   <div className="flex items-center justify-between mb-1">
@@ -284,27 +393,34 @@ export function DashboardPage() {
         <div className="card p-5 lg:col-span-2 animate-slide-up">
           <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-4">Top Selling Items</h3>
           <div className="space-y-3">
-            {stats.topItems.map((item, i) => (
-              <div key={i} className="flex items-center gap-3 group">
-                <span className="text-xs font-bold text-gray-300 dark:text-gray-600 w-5">{i + 1}</span>
-                <FoodImage image={item.image} name={item.name} className="w-10 h-10 rounded-xl shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{item.name}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">{item.orders} orders</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">₹{item.revenue.toLocaleString('en-IN')}</p>
-                </div>
-                <div className="w-24 hidden sm:block">
-                  <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                    <div
-                      className="h-full bg-brand-500 rounded-full transition-all duration-1000"
-                      style={{ width: `${(item.orders / stats.topItems[0].orders) * 100}%`, transitionDelay: `${i * 100}ms` }}
-                    />
+            {topItems.length === 0 ? (
+              <p className="text-xs text-gray-400 dark:text-gray-500 text-center py-4">No sales recorded today yet.</p>
+            ) : (
+              topItems.map((item, i) => (
+                <div key={item.item_id} className="flex items-center gap-3 group">
+                  <span className="text-xs font-bold text-gray-300 dark:text-gray-600 w-5">{i + 1}</span>
+                  <FoodImage image={undefined} name={item.item_name} className="w-10 h-10 rounded-xl shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{item.item_name}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">{item.quantity_sold} orders</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">₹{item.revenue.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div className="w-24 hidden sm:block">
+                    <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                      <div
+                        className="h-full bg-brand-500 rounded-full transition-all duration-1000"
+                        style={{
+                          width: `${topItems[0]?.quantity_sold > 0 ? (item.quantity_sold / topItems[0].quantity_sold) * 100 : 0}%`,
+                          transitionDelay: `${i * 100}ms`,
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -315,11 +431,15 @@ export function DashboardPage() {
             <h3 className="font-semibold text-sm text-gray-900 dark:text-white">Alerts</h3>
           </div>
           <div className="space-y-2.5">
-            {stats.alerts.map((alert, i) => {
+            {alerts.map((alert, i) => {
               const cfg = alertIcons[alert.type as keyof typeof alertIcons];
               const Icon = cfg.icon;
               return (
-                <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                <div
+                  key={i}
+                  onClick={() => alert.message.toLowerCase().includes('refund') && setPage('refunds')}
+                  className={`flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${alert.message.toLowerCase().includes('refund') ? 'cursor-pointer hover:ring-1 hover:ring-brand-500/30' : ''}`}
+                >
                   <div className={`w-7 h-7 rounded-lg ${cfg.bg} flex items-center justify-center shrink-0 mt-0.5`}>
                     <Icon className={`w-3.5 h-3.5 ${cfg.color}`} />
                   </div>
@@ -337,11 +457,14 @@ export function DashboardPage() {
   );
 }
 
-function SalesChart({ data }: { data: { hour: string; value: number }[] }) {
-  const max = Math.max(...data.map(d => d.value));
+// ── SalesChart ──────────────────────────────────────────────────────────────
+// Accepts { hour, revenue } from the API (backend field name is `revenue`)
+
+function SalesChart({ data }: { data: { hour: string; revenue: number }[] }) {
+  const max = Math.max(...data.map(d => d.revenue), 1);
   const width = 100;
   const height = 100;
-  const barWidth = width / data.length;
+  const barWidth = width / Math.max(data.length, 1);
 
   return (
     <div className="relative">
@@ -353,7 +476,7 @@ function SalesChart({ data }: { data: { hour: string; value: number }[] }) {
           </linearGradient>
         </defs>
         {data.map((d, i) => {
-          const barH = (d.value / max) * height;
+          const barH = (d.revenue / max) * height;
           return (
             <rect
               key={i}

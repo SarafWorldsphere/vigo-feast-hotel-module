@@ -6,11 +6,21 @@ import socket
 import threading
 import time
 from urllib.parse import urlparse
+from uuid import UUID
 
 import psycopg2
 from dotenv import load_dotenv
 
+from app.db.database import SessionLocal
+from app.models.order import Order
+from app.services.financial_calculations import (
+    finalize_order_financials,
+)
+from app.services.notifications import create_restaurant_notification
+from app.services.restaurant_hours import is_accepting_orders
+
 load_dotenv()
+
 
 
 class OrderListener:
@@ -25,6 +35,7 @@ class OrderListener:
         "order_delivered",
         "delivery_partner_cancelled",
         "delivery_partner_reassigned",
+        "complaint_status_changed",
     )
 
     EVENT_MAPPING = {
@@ -37,6 +48,7 @@ class OrderListener:
         "order_delivered": "ORDER_DELIVERED",
         "delivery_partner_cancelled": "DELIVERY_PARTNER_CANCELLED",
         "delivery_partner_reassigned": "DELIVERY_PARTNER_REASSIGNED",
+        "complaint_status_changed": "COMPLAINT_STATUS_CHANGED",
     }
 
     def __init__(self, websocket_manager):
@@ -165,7 +177,129 @@ class OrderListener:
                     # Exponential backoff
                     retry_delay = min(retry_delay * 2, 30)
 
-    def _handle_notification(self, notification):
+    def _finalize_delivered_order(
+        self,
+        order_id,
+        restaurant_id,
+    ):
+        db = SessionLocal()
+
+        try:
+            order = (
+                db.query(Order)
+                .filter(
+                    Order.order_id == order_id,
+                    Order.is_deleted.is_(False),
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if order is None:
+                print(
+                    f"Financial finalization skipped: "
+                    f"order {order_id} not found"
+                )
+                return
+
+            if str(order.restaurant_id) != str(restaurant_id):
+                print(
+                    f"Financial finalization skipped: "
+                    f"restaurant mismatch for order {order_id}"
+                )
+                return
+
+            if order.order_status != "DELIVERED":
+                print(
+                    f"Financial finalization skipped: "
+                    f"order {order_id} status is "
+                    f"{order.order_status}"
+                )
+                return
+
+            finalized = finalize_order_financials(order)
+
+            if finalized:
+                db.commit()
+                print(
+                    f"Financial snapshot saved for "
+                    f"order {order_id}"
+                )
+            else:
+                db.rollback()
+                print(
+                    f"Financial snapshot already exists "
+                    f"for order {order_id}"
+                )
+
+        except Exception as exc:
+            db.rollback()
+            print(
+                f"Failed to finalize order {order_id}: {exc}"
+            )
+
+        finally:
+            db.close()
+
+    def _should_forward_to_restaurant(
+        self,
+        channel: str,
+        restaurant_id,
+        order_id: int | None = None,
+        as_of=None,
+    ) -> bool:
+        """
+        Check whether this event should be forwarded to the restaurant WebSocket.
+        - order_placed: forwarded ONLY when restaurant is currently accepting orders.
+        - delivery/other events: forwarded if restaurant is accepting orders, OR if
+          the event belongs to an already accepted/in-progress order (preserving lifecycle).
+        """
+        try:
+            r_uuid = UUID(str(restaurant_id))
+        except (ValueError, TypeError):
+            return False
+
+        db = SessionLocal()
+        try:
+            is_accepting = is_accepting_orders(db, r_uuid, as_of=as_of)
+
+            # 1. New incoming order placed: strictly requires online ordering availability
+            if channel == "order_placed":
+                return is_accepting
+
+            # 2. If the restaurant is currently accepting orders, allow all events
+            if is_accepting:
+                return True
+
+            # 3. If closed/paused, preserve ongoing order workflows for accepted orders
+            if order_id is not None:
+                order = (
+                    db.query(Order)
+                    .filter(
+                        Order.order_id == order_id,
+                        Order.restaurant_id == r_uuid,
+                        Order.is_deleted.is_(False),
+                    )
+                    .first()
+                )
+                if order and order.order_status in (
+                    "ACCEPTED",
+                    "PREPARING",
+                    "READY_FOR_PICKUP",
+                    "PICKED_UP",
+                    "DELIVERED",
+                ):
+                    return True
+
+            # Otherwise, unaccepted or new order events are suppressed from closed restaurant
+            return False
+        except Exception as e:
+            print(f"Error checking availability in OrderListener: {e}")
+            return False
+        finally:
+            db.close()
+
+    def _handle_notification(self, notification, as_of=None):
 
         print(
             f"NOTIFICATION RECEIVED: "
@@ -175,41 +309,91 @@ class OrderListener:
 
         try:
             payload = json.loads(notification.payload)
-
-            order_id = payload["order_id"]
             restaurant_id = payload["restaurant_id"]
 
-        except (json.JSONDecodeError, KeyError) as e:
+            if notification.channel == "complaint_status_changed":
+                event_data = {
+                    "event": "COMPLAINT_STATUS_CHANGED",
+                    "complaint_id": payload["complaint_id"],
+                    "order_id": payload.get("order_id"),
+                    "previous_status": payload.get("previous_status"),
+                    "status": payload["status"],
+                    "updated_at": payload.get("updated_at"),
+                }
+            else:
+                order_id = payload["order_id"]
 
+                event_name = self.EVENT_MAPPING.get(
+                    notification.channel
+                )
+
+                if not event_name:
+                    return
+
+                event_data = {
+                    "event": event_name,
+                    "order_id": order_id,
+                }
+
+                for key in (
+                    "assignment_id",
+                    "partner_id",
+                    "status",
+                    "eta_minutes",
+                ):
+                    if key in payload:
+                        event_data[key] = payload[key]
+
+                # Internal order/financial finalization runs regardless of restaurant opening hours
+                if notification.channel == "order_delivered":
+                    self._finalize_delivered_order(
+                        order_id=order_id,
+                        restaurant_id=restaurant_id,
+                    )
+
+        except (json.JSONDecodeError, KeyError) as e:
             print(
                 f"Invalid notification payload: {e}. "
                 f"Payload={notification.payload}"
             )
-
             return
 
-        event_name = self.EVENT_MAPPING.get(
-            notification.channel
-        )
+        # Persist eligible notifications independently of live delivery.
+        try:
+            restaurant_uuid = UUID(str(restaurant_id))
 
-        print(f"EVENT MAPPED: {event_name}")
+            db = SessionLocal()
+            try:
+                create_restaurant_notification(
+                    db=db,
+                    restaurant_id=restaurant_uuid,
+                    event_data=event_data,
+                )
+            finally:
+                db.close()
 
-        if not event_name:
-            return
+        except Exception as exc:
+            # Notification persistence failure must not stop
+            # existing order/delivery WebSocket processing.
+            print(
+                "Failed to persist restaurant notification: "
+                f"{exc}"
+            )
 
-        event_data = {
-            "event": event_name,
-            "order_id": order_id,
-        }
-
-        for key in (
-            "assignment_id",
-            "partner_id",
-            "status",
-            "eta_minutes",
+        # Enforce availability check when dispatching to restaurant WebSocket
+        if not self._should_forward_to_restaurant(
+            channel=notification.channel,
+            restaurant_id=restaurant_id,
+            order_id=payload.get("order_id"),
+            as_of=as_of,
         ):
-            if key in payload:
-                event_data[key] = payload[key]
+            print(
+                f"NOTIFICATION SUPPRESSED FOR CLOSED/OFFLINE RESTAURANT: "
+                f"channel={notification.channel}, "
+                f"restaurant_id={restaurant_id}, "
+                f"order_id={payload.get('order_id')}"
+            )
+            return
 
         print(
             f"SENDING TO RESTAURANT: {event_data}"
@@ -227,7 +411,7 @@ class OrderListener:
 
             asyncio.run_coroutine_threadsafe(
                 self.websocket_manager.send_to_restaurant(
-                    restaurant_id,
+                    str(restaurant_id),
                     event_data,
                 ),
                 self.loop,
@@ -238,6 +422,7 @@ class OrderListener:
             print(
                 f"Failed to send event to restaurant: {e}"
             )
+
 
     def listen(self):
 

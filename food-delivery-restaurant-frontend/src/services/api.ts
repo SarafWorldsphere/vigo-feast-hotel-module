@@ -1,6 +1,7 @@
 // Real API client connecting to FastAPI backend
 
-import type { Order, OrderStatus, Offer, OfferType, OfferStatus } from '@/data/mockData';
+import type { Offer, OfferType, OfferStatus } from '@/data/mockData';
+import type { Order, OrderStatus } from '@/types/order';
 import type { Delivery, DeliveryStage, DeliveryPartner } from '@/types/delivery';
 
 export const API_BASE_URL =
@@ -160,7 +161,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}, isRetry =
     !isRetry &&
     !endpoint.includes('/auth/login') &&
     !endpoint.includes('/auth/refresh') &&
-    !endpoint.includes('/auth/register-owner')
+    !endpoint.includes('/auth/register-owner') &&
+    !endpoint.includes('/auth/otp/')
   ) {
     try {
       if (!isRefreshing) {
@@ -265,6 +267,61 @@ export async function apiRegisterOwner(payload: OwnerRegisterRequest): Promise<O
  */
 export async function apiLogin(payload: OwnerLoginRequest): Promise<OwnerLoginResponse> {
   const res = await request<OwnerLoginResponse>('/api/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (res?.access_token) {
+    setAuthToken(res.access_token);
+  }
+  return res;
+}
+
+// ===== OTP login helpers =====
+
+export interface OwnerOtpRequestPayload {
+  phone: string;
+  language: 'en' | 'hi' | 'te';
+}
+
+export interface OwnerOtpRequestResponse {
+  message: string;
+  request_id: string;
+}
+
+export interface OwnerOtpVerifyPayload {
+  request_id: string;
+  phone: string;
+  otp: string;
+}
+
+export interface OwnerOtpVerifyResponse {
+  message: string;
+  owner_id: string;
+  access_token: string;
+}
+
+/**
+ * POST /api/v1/auth/otp/request
+ * Sends an OTP SMS to the owner's registered phone number.
+ * Never returns the OTP itself — it is delivered via SMS.
+ */
+export async function apiRequestOtp(
+  payload: OwnerOtpRequestPayload,
+): Promise<OwnerOtpRequestResponse> {
+  return request<OwnerOtpRequestResponse>('/api/v1/auth/otp/request', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * POST /api/v1/auth/otp/verify
+ * Verifies the six-digit OTP and sets access_token + refresh_token cookies on success.
+ */
+export async function apiVerifyOtp(
+  payload: OwnerOtpVerifyPayload,
+): Promise<OwnerOtpVerifyResponse> {
+  const res = await request<OwnerOtpVerifyResponse>('/api/v1/auth/otp/verify', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -495,7 +552,10 @@ export interface BackendOrderListResponse {
   total: number;
 }
 
-export function mapBackendOrderToFrontend(bo: BackendOrder): Order {
+export function mapBackendOrderToFrontend(
+  bo: BackendOrder,
+  delivery?: Pick<BackendDelivery, 'customer' | 'delivery_partner'>,
+): Order {
   const rawStatus = (bo.order_status || 'PLACED').toUpperCase();
   let status: OrderStatus = 'PLACED';
   if (rawStatus === 'ORDERED' || rawStatus === 'PLACED') {
@@ -525,14 +585,7 @@ export function mapBackendOrderToFrontend(bo: BackendOrder): Order {
         quantity: it.quantity,
         price: Number(it.unit_price) || 0,
       }))
-    : [
-        {
-          id: `item-${bo.order_id}`,
-          name: 'Food Order Items',
-          quantity: 1,
-          price: Number(bo.subtotal) || Number(bo.total_amount) || 0,
-        },
-      ];
+    : [];
 
   const orderIdStr = String(bo.order_id);
   const shortId = `#ORD-${orderIdStr.padStart(4, '0')}`;
@@ -540,8 +593,8 @@ export function mapBackendOrderToFrontend(bo: BackendOrder): Order {
   return {
     id: orderIdStr,
     shortId,
-    customerName: `Customer #${bo.customer_id}`,
-    customerPhone: '+91 98765 43210',
+    customerName: delivery?.customer?.name || `Customer #${bo.customer_id}`,
+    customerPhone: delivery?.customer?.phone ?? undefined,
     status,
     items,
     subtotal: Number(bo.subtotal) || 0,
@@ -550,11 +603,20 @@ export function mapBackendOrderToFrontend(bo: BackendOrder): Order {
     packagingFee: 0,
     discount: Number(bo.discount_amount) || 0,
     total: Number(bo.total_amount) || 0,
-    paymentStatus: 'PAID',
-    paymentMethod: 'Online UPI',
+    paymentStatus: 'PENDING',
+    paymentMethod: 'Payment details unavailable',
     placedAt: bo.created_at || new Date().toISOString(),
-    prepTime: 25,
-    deliveryAddress: 'Customer Delivery Address',
+    prepTime: undefined,
+    deliveryAddress: delivery?.customer?.address ?? undefined,
+    deliveryPartner: delivery?.delivery_partner
+      ? {
+          name: delivery.delivery_partner.name,
+          phone: delivery.delivery_partner.phone ?? undefined,
+          vehicle: [delivery.delivery_partner.vehicle_type, delivery.delivery_partner.vehicle_number]
+            .filter(Boolean)
+            .join(' ') || undefined,
+        }
+      : undefined,
     timeline: [
       {
         status,
@@ -1053,6 +1115,972 @@ export async function apiUpdateOwnerProfile(
 
 
 
+// ============================================================
+// Dashboard
+// ============================================================
 
+export interface DashboardSummary {
+  today_orders: number;
+  gross_revenue: number;
+  net_revenue: number;
+  average_order_value: number;
+  rating: number;
+  average_preparation_time: number | null;
+  acceptance_rate: number;
+  cancellation_rate: number;
+}
+
+export interface SalesTrendPoint {
+  hour: string;
+  revenue: number;
+}
+
+export interface SalesTrend {
+  today_revenue: number;
+  yesterday_revenue: number;
+  change_percentage: number | null;
+  hourly: SalesTrendPoint[];
+}
+
+export interface OrderPipeline {
+  new: number;
+  preparing: number;
+  ready: number;
+  completed: number;
+  rejected: number;
+}
+
+export interface TopSellingItem {
+  item_id: string;
+  item_name: string;
+  quantity_sold: number;
+  revenue: number;
+}
+
+export interface DashboardResponse {
+  summary: DashboardSummary;
+  sales_trend: SalesTrend;
+  order_pipeline: OrderPipeline;
+  top_selling_items: TopSellingItem[];
+}
+
+/**
+ * GET /api/v1/restaurants/dashboard
+ * Retrieves live dashboard data for the authenticated restaurant owner.
+ */
+export async function apiGetDashboard(): Promise<DashboardResponse> {
+  return request<DashboardResponse>('/api/v1/restaurants/dashboard', {
+    method: 'GET',
+  });
+}
+
+export interface EarningsSummary {
+  currency: string;
+  gross_sales: number;
+  restaurant_discounts: number;
+  commission: number;
+  commission_tax: number;
+  other_fees: number;
+  refunds: number;
+  adjustments: number;
+  net_earnings: number;
+  delivered_orders: number;
+  unfinalized_delivered_orders: number;
+}
+
+export interface EarningsResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  summary: EarningsSummary;
+}
+
+export interface EarningsParams {
+  period?: 'today' | 'week' | 'month' | 'custom';
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/restaurants/earnings
+ * Retrieves earnings reporting data for the authenticated restaurant.
+ */
+export async function apiGetEarnings(params?: EarningsParams): Promise<EarningsResponse> {
+  const query = new URLSearchParams();
+  if (params?.start_date && params?.end_date) {
+    query.set('start_date', params.start_date);
+    query.set('end_date', params.end_date);
+    if (params.period) {
+      query.set('period', params.period);
+    }
+  } else if (params?.period) {
+    query.set('period', params.period);
+  }
+
+  const qs = query.toString();
+  const endpoint = `/api/v1/restaurants/earnings${qs ? `?${qs}` : ''}`;
+  return request<EarningsResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface CurrentSettlementPeriod {
+  period_start: string | null;
+  period_end: string | null;
+  settlement_date: string;
+  net_amount: string;
+  status: string | null;
+  is_simulated: boolean;
+}
+
+export async function apiGetCurrentSettlementPeriod(): Promise<CurrentSettlementPeriod> {
+  return request<CurrentSettlementPeriod>(
+    "/api/v1/restaurants/settlements/current-period",
+    { method: "GET" }
+  );
+}
+
+export interface SettlementHistoryItem {
+  batch_id: number;
+  period_start: string;
+  period_end: string;
+  settlement_date: string;
+  orders: number;
+  total_orders?: number;
+  amount: number;
+  net_amount?: number;
+  status: 'PAID' | 'PENDING' | 'PROCESSING' | 'FAILED' | string;
+  is_simulated: boolean;
+  payout_reference?: string | null;
+  paid_at?: string | null;
+}
+
+export interface SettlementHistoryResponse {
+  settlements: SettlementHistoryItem[];
+  total: number;
+}
+
+export interface SettlementHistoryParams {
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * GET /api/v1/restaurants/settlements
+ * Retrieves settlement batch history for the authenticated restaurant.
+ */
+export async function apiGetSettlements(
+  params?: SettlementHistoryParams
+): Promise<SettlementHistoryResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) {
+    query.set('limit', String(params.limit));
+  }
+  if (params?.offset !== undefined) {
+    query.set('offset', String(params.offset));
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/restaurants/settlements${qs ? `?${qs}` : ''}`;
+  return request<SettlementHistoryResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface AnalyticsMetric {
+  value: number | null;
+  previous_value: number | null;
+  change_percent: number | null;
+}
+
+export interface AnalyticsOverviewResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  acceptance_rate: AnalyticsMetric;
+  cancellation_rate: AnalyticsMetric;
+  average_order_value: AnalyticsMetric;
+  average_preparation_time: AnalyticsMetric;
+  on_time_preparation_rate: AnalyticsMetric;
+  order_accuracy: AnalyticsMetric;
+  customer_rating: AnalyticsMetric;
+  gross_revenue: AnalyticsMetric;
+}
+
+export interface AnalyticsOverviewParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/overview
+ * Retrieves overview analytics metrics for the authenticated restaurant.
+ */
+export async function apiGetAnalyticsOverview(
+  params?: AnalyticsOverviewParams
+): Promise<AnalyticsOverviewResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/overview${qs ? `?${qs}` : ''}`;
+  return request<AnalyticsOverviewResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface SalesTrendPoint {
+  bucket_start: string;
+  gross_revenue: number;
+  orders: number;
+}
+
+export interface SalesTrendResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  points: SalesTrendPoint[];
+}
+
+export interface SalesTrendParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/sales-trend
+ * Retrieves sales & order trend datapoints for the authenticated restaurant.
+ */
+export async function apiGetSalesTrend(
+  params?: SalesTrendParams
+): Promise<SalesTrendResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/sales-trend${qs ? `?${qs}` : ''}`;
+  return request<SalesTrendResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface CustomerBreakdownResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  total_customers: number;
+  new_customers: number;
+  returning_customers: number;
+  new_customer_percent: number;
+  returning_customer_percent: number;
+}
+
+export interface CustomerBreakdownParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/customer-breakdown
+ * Retrieves new vs returning customer patronage breakdown for the authenticated restaurant.
+ */
+export async function apiGetCustomerBreakdown(
+  params?: CustomerBreakdownParams
+): Promise<CustomerBreakdownResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/customer-breakdown${qs ? `?${qs}` : ''}`;
+  return request<CustomerBreakdownResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface TopSellingItem {
+  menu_item_id: string;
+  name: string;
+  image_url?: string | null;
+  category_name?: string | null;
+  quantity_sold: number;
+  order_count: number;
+  gross_revenue: number | string;
+}
+
+export interface TopSellingItemsResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  items: TopSellingItem[];
+}
+
+export interface TopSellingItemsParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/top-selling-items
+ * Retrieves top selling items by volume for the authenticated restaurant.
+ */
+export async function apiGetTopSellingItems(
+  params?: TopSellingItemsParams
+): Promise<TopSellingItemsResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/top-selling-items${qs ? `?${qs}` : ''}`;
+  return request<TopSellingItemsResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export type HighestRevenueItemsResponse = TopSellingItemsResponse;
+export type HighestRevenueItem = TopSellingItem;
+export type HighestRevenueItemsParams = TopSellingItemsParams;
+
+/**
+ * GET /api/v1/analytics/highest-revenue-items
+ * Retrieves highest revenue items by gross revenue for the authenticated restaurant.
+ */
+export async function apiGetHighestRevenueItems(
+  params?: HighestRevenueItemsParams
+): Promise<HighestRevenueItemsResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/highest-revenue-items${qs ? `?${qs}` : ''}`;
+  return request<HighestRevenueItemsResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+export interface MenuPerformanceItem {
+  menu_item_id: string;
+  name: string;
+  category_name?: string | null;
+  orders: number;
+  gross_revenue: number | string;
+  rating?: number | string | null;
+  average_preparation_minutes?: number | string | null;
+  performance_label?: string | null;
+}
+
+export interface MenuPerformanceResponse {
+  period: string;
+  start_date: string;
+  end_date: string;
+  items: MenuPerformanceItem[];
+  total: number;
+}
+
+export interface MenuPerformanceParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/menu-performance
+ * Retrieves overall menu performance aggregates for the authenticated restaurant.
+ */
+export async function apiGetMenuPerformance(
+  params?: MenuPerformanceParams
+): Promise<MenuPerformanceResponse> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/menu-performance${qs ? `?${qs}` : ''}`;
+  return request<MenuPerformanceResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+export interface ExportAnalyticsParams {
+  period?: 'today' | 'week' | 'weekly' | 'month' | 'monthly' | 'custom' | string;
+  start_date?: string;
+  end_date?: string;
+}
+
+/**
+ * GET /api/v1/analytics/export
+ * Downloads the menu item performance analytics CSV export for the selected period.
+ */
+export async function apiExportAnalytics(
+  params?: ExportAnalyticsParams
+): Promise<{ blob: Blob; filename: string }> {
+  const query = new URLSearchParams();
+  if (params?.period) {
+    let normalized = params.period;
+    if (normalized === 'weekly') normalized = 'week';
+    if (normalized === 'monthly') normalized = 'month';
+    query.set('period', normalized);
+  }
+  if (params?.start_date) {
+    query.set('start_date', params.start_date);
+  }
+  if (params?.end_date) {
+    query.set('end_date', params.end_date);
+  }
+  const qs = query.toString();
+  const endpoint = `/api/v1/analytics/export${qs ? `?${qs}` : ''}`;
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+
+  const token = getAuthToken();
+  const headers: HeadersInit = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    let errorMsg = `Export failed (${response.status})`;
+    try {
+      const data = await response.json();
+      if (data?.detail) {
+        errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMsg);
+  }
+
+  const disposition = response.headers.get('content-disposition') || '';
+  let filename = 'menu_performance.csv';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  if (match && match[1]) {
+    filename = match[1];
+  }
+
+  const blob = await response.blob();
+  return { blob, filename };
+}
+
+/**
+ * Initiates browser file download for a generated CSV Blob.
+ */
+export function triggerCsvDownload(blob: Blob, filename: string): void {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+export interface FeedbackItem {
+  feedback_id: number;
+  order_id: number;
+  rating: number;
+  comments?: string | null;
+  created_at?: string | null;
+}
+
+export interface FeedbackListResponse {
+  average_rating: number;
+  total_reviews: number;
+  rating_distribution: Record<string, number>;
+  reviews: FeedbackItem[];
+}
+
+/**
+ * GET /api/v1/restaurants/me/feedback
+ * Retrieves customer feedback, overall rating, and rating distribution for the authenticated restaurant.
+ */
+export async function apiGetRestaurantFeedback(): Promise<FeedbackListResponse> {
+  return request<FeedbackListResponse>('/api/v1/restaurants/me/feedback', {
+    method: 'GET',
+  });
+}
+
+export type BackendComplaintCategory =
+  | 'MISSING_ITEM'
+  | 'WRONG_ITEM'
+  | 'FOOD_QUALITY'
+  | 'PACKAGING'
+  | 'TEMPERATURE'
+  | 'OTHER';
+
+export type BackendComplaintStatus =
+  | 'OPEN'
+  | 'UNDER_REVIEW'
+  | 'RESOLVED'
+  | 'REJECTED';
+
+export type BackendComplaintPriority =
+  | 'NORMAL'
+  | 'HIGH'
+  | 'URGENT';
+
+export interface BackendComplaint {
+  complaint_id: number;
+  order_id: number;
+  customer_id: number;
+  restaurant_id: string;
+  category: BackendComplaintCategory;
+  description: string;
+  status: BackendComplaintStatus;
+  priority: BackendComplaintPriority;
+  resolution_note?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+}
+
+export interface BackendComplaintListResponse {
+  items: BackendComplaint[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ComplaintQueryParams {
+  status?: BackendComplaintStatus | string;
+  category?: BackendComplaintCategory | string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * GET /api/v1/complaints
+ * Lists complaints for the authenticated owner's restaurant.
+ */
+export async function apiGetComplaints(
+  params?: ComplaintQueryParams
+): Promise<BackendComplaintListResponse> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.category) query.set('category', params.category);
+  if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.offset !== undefined) query.set('offset', String(params.offset));
+
+  const qs = query.toString();
+  const endpoint = `/api/v1/complaints${qs ? `?${qs}` : ''}`;
+  return request<BackendComplaintListResponse>(endpoint, {
+    method: 'GET',
+  });
+}
+
+/**
+ * GET /api/v1/complaints/{complaint_id}
+ * Retrieves details for a specific complaint.
+ */
+export async function apiGetComplaint(
+  complaintId: number | string
+): Promise<BackendComplaint> {
+  return request<BackendComplaint>(`/api/v1/complaints/${encodeURIComponent(complaintId)}`, {
+    method: 'GET',
+  });
+}
+
+/**
+ * PATCH /api/v1/complaints/{complaint_id}/status
+ * Updates status and creates an audit history entry.
+ */
+export async function apiUpdateComplaintStatus(
+  complaintId: number | string,
+  payload: { status: 'UNDER_REVIEW' | 'RESOLVED' | 'REJECTED'; note?: string }
+): Promise<BackendComplaint> {
+  return request<BackendComplaint>(`/api/v1/complaints/${encodeURIComponent(complaintId)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export type RefundDestination =
+  | 'ORIGINAL_PAYMENT_METHOD'
+  | 'UPI'
+  | 'BANK_ACCOUNT';
+
+export type RefundStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface RefundCreatePayload {
+  amount: number;
+  reason: string;
+  destination_method: RefundDestination;
+  idempotency_key: string;
+}
+
+export interface BackendRefund {
+  refund_id: number;
+  order_id: number;
+  complaint_id: number | null;
+  initiated_by_owner_id: string | null;
+  amount: string;
+  status: RefundStatus;
+  reason: string | null;
+  destination_method: RefundDestination | null;
+  execution_reference: string | null;
+  failure_reason: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export type RefundResponse = BackendRefund;
+
+/**
+ * POST /api/v1/complaints/{complaint_id}/refunds
+ * Creates a pending refund record for a resolved complaint.
+ */
+export async function apiCreateComplaintRefund(
+  complaintId: number | string,
+  payload: RefundCreatePayload
+): Promise<BackendRefund> {
+  return request<BackendRefund>(
+    `/api/v1/complaints/${encodeURIComponent(complaintId)}/refunds`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export interface BackendRefundListResponse {
+  items: BackendRefund[];
+  total: number;
+}
+export type RefundListResponse = BackendRefundListResponse;
+
+export async function apiGetRefunds(params?: {
+  status?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  limit?: number;
+  offset?: number;
+}): Promise<RefundListResponse> {
+  const query = new URLSearchParams();
+
+  if (params?.status) query.set('status', params.status);
+  if (params?.limit !== undefined) {
+    query.set('limit', String(params.limit));
+  }
+  if (params?.offset !== undefined) {
+    query.set('offset', String(params.offset));
+  }
+
+  const qs = query.toString();
+
+  return request<RefundListResponse>(
+    `/api/v1/refunds${qs ? `?${qs}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+
+// ============================================================
+// Restaurant Hours — Weekly Schedule, Special Dates, Order Settings
+// ============================================================
+
+export type SlotType = 'OPERATING' | 'ONLINE_ORDERING';
+
+export interface HourSlotInput {
+  slot_type: SlotType;
+  start_time: string; // "HH:MM:SS"
+  end_time: string;
+}
+
+export interface HourSlotResponse extends HourSlotInput {
+  id: string;
+}
+
+export interface WeeklyDayInput {
+  day_of_week: number; // 1=Mon … 7=Sun (ISO isoweekday)
+  is_closed: boolean;
+  slots: HourSlotInput[];
+}
+
+export interface WeeklyDayResponse {
+  id: string;
+  day_of_week: number;
+  is_closed: boolean;
+  slots: HourSlotResponse[];
+}
+
+export interface WeeklyScheduleResponse {
+  days: WeeklyDayResponse[];
+}
+
+export interface SpecialHoursInput {
+  special_date: string; // "YYYY-MM-DD"
+  is_closed: boolean;
+  note?: string | null;
+  slots: HourSlotInput[];
+}
+
+export interface SpecialHoursResponse {
+  id: string;
+  special_date: string;
+  is_closed: boolean;
+  note: string | null;
+  slots: HourSlotResponse[];
+}
+
+export interface OrderSettingsResponse {
+  is_paused: boolean;
+  pause_reason: string | null;
+  paused_until: string | null; // ISO datetime string
+}
+
+export interface RestaurantAvailabilityResponse {
+  is_operating_now: boolean;
+  is_ordering_now: boolean;
+  is_paused: boolean;
+  is_accepting_orders: boolean;
+  status: 'ONLINE' | 'PAUSED' | 'OFFLINE';
+  reason:
+    | 'NO_SCHEDULE'
+    | 'CLOSED_TODAY'
+    | 'OUTSIDE_OPERATING_HOURS'
+    | 'OUTSIDE_ORDERING_HOURS'
+    | 'TEMPORARILY_PAUSED'
+    | 'ACCEPTING_ORDERS';
+  paused_until?: string | null;
+  next_change_at?: string | null;
+}
+
+export interface PauseOrdersInput {
+  reason?: string | null;
+  paused_until?: string | null; // ISO datetime string with timezone offset
+}
+
+
+/** GET /api/v1/restaurants/hours/weekly */
+export async function apiGetWeeklySchedule(): Promise<WeeklyScheduleResponse> {
+  return request<WeeklyScheduleResponse>('/api/v1/restaurants/hours/weekly', { method: 'GET' });
+}
+
+/** PUT /api/v1/restaurants/hours/weekly */
+export async function apiPutWeeklySchedule(
+  payload: { days: WeeklyDayInput[] }
+): Promise<WeeklyScheduleResponse> {
+  return request<WeeklyScheduleResponse>('/api/v1/restaurants/hours/weekly', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** GET /api/v1/restaurants/hours/special-dates */
+export async function apiGetSpecialDates(): Promise<SpecialHoursResponse[]> {
+  return request<SpecialHoursResponse[]>('/api/v1/restaurants/hours/special-dates', { method: 'GET' });
+}
+
+/** POST /api/v1/restaurants/hours/special-dates */
+export async function apiCreateSpecialDate(
+  payload: SpecialHoursInput
+): Promise<{ id: string; message: string }> {
+  return request<{ id: string; message: string }>('/api/v1/restaurants/hours/special-dates', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** PUT /api/v1/restaurants/hours/special-dates/{special_hours_id} */
+export async function apiUpdateSpecialDate(
+  specialHoursId: string,
+  payload: SpecialHoursInput
+): Promise<{ id: string; message: string }> {
+  return request<{ id: string; message: string }>(
+    `/api/v1/restaurants/hours/special-dates/${encodeURIComponent(specialHoursId)}`,
+    { method: 'PUT', body: JSON.stringify(payload) }
+  );
+}
+
+/** DELETE /api/v1/restaurants/hours/special-dates/{special_hours_id} */
+export async function apiDeleteSpecialDate(specialHoursId: string): Promise<void> {
+  await request<void>(
+    `/api/v1/restaurants/hours/special-dates/${encodeURIComponent(specialHoursId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** GET /api/v1/restaurants/hours/order-settings */
+export async function apiGetOrderSettings(): Promise<OrderSettingsResponse> {
+  return request<OrderSettingsResponse>('/api/v1/restaurants/hours/order-settings', { method: 'GET' });
+}
+
+/** PUT /api/v1/restaurants/hours/order-settings/pause */
+export async function apiPauseOrders(payload: PauseOrdersInput): Promise<OrderSettingsResponse> {
+  return request<OrderSettingsResponse>('/api/v1/restaurants/hours/order-settings/pause', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** PUT /api/v1/restaurants/hours/order-settings/resume */
+export async function apiResumeOrders(): Promise<OrderSettingsResponse> {
+  return request<OrderSettingsResponse>('/api/v1/restaurants/hours/order-settings/resume', {
+    method: 'PUT',
+  });
+}
+
+/** GET /api/v1/restaurants/hours/availability */
+export async function apiGetRestaurantAvailability(): Promise<RestaurantAvailabilityResponse> {
+  return request<RestaurantAvailabilityResponse>('/api/v1/restaurants/hours/availability', {
+    method: 'GET',
+  });
+}
+
+// ===== Restaurant Notifications Endpoints =====
+
+export interface BackendNotification {
+  notification_id: number;
+  restaurant_id: string;
+  notification_type: string;
+  title: string;
+  message: string;
+  entity_type: 'ORDER' | 'COMPLAINT' | 'REFUND' | 'DELIVERY' | null;
+  entity_id: number | null;
+  is_read: boolean;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface BackendNotificationListResponse {
+  items: BackendNotification[];
+  total: number;
+  unread_count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface NotificationQueryParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface ReadNotificationResponse {
+  message: string;
+  notification_id: number;
+  is_read: boolean;
+}
+
+export interface ReadAllNotificationsResponse {
+  message: string;
+  updated_count: number;
+}
+
+export interface UnreadNotificationCountResponse {
+  unread_count: number;
+}
+
+/** GET /api/v1/notifications */
+export async function apiGetNotifications(
+  params: NotificationQueryParams = {}
+): Promise<BackendNotificationListResponse> {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.offset !== undefined) query.set('offset', String(params.offset));
+  const queryString = query.toString();
+  return request<BackendNotificationListResponse>(
+    `/api/v1/notifications${queryString ? `?${queryString}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+/** GET /api/v1/notifications/unread-count */
+export async function apiGetUnreadNotificationCount(): Promise<UnreadNotificationCountResponse> {
+  return request<UnreadNotificationCountResponse>(
+    '/api/v1/notifications/unread-count',
+    { method: 'GET' }
+  );
+}
+
+/** PATCH /api/v1/notifications/{notification_id}/read */
+export async function apiMarkNotificationRead(
+  notificationId: number | string
+): Promise<ReadNotificationResponse> {
+  return request<ReadNotificationResponse>(
+    `/api/v1/notifications/${encodeURIComponent(notificationId)}/read`,
+    { method: 'PATCH' }
+  );
+}
+
+/** PATCH /api/v1/notifications/read-all */
+export async function apiMarkAllNotificationsRead(): Promise<ReadAllNotificationsResponse> {
+  return request<ReadAllNotificationsResponse>(
+    '/api/v1/notifications/read-all',
+    { method: 'PATCH' }
+  );
+}
 
 

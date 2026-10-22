@@ -1,4 +1,5 @@
-import { OrderStatus } from '@/data/mockData';
+import { RefundStatus, refundStatusConfig } from '@/data/mockData';
+import type { OrderStatus } from '@/types/order';
 
 const statusConfig: Record<OrderStatus, { label: string; bg: string; text: string; dot: string }> = {
   PLACED: { label: 'New', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500' },
@@ -25,8 +26,23 @@ export function StatusChip({ status, size = 'sm' }: { status: OrderStatus; size?
   );
 }
 
+export function RefundStatusChip({ status, size = 'sm' }: { status: RefundStatus; size?: 'sm' | 'xs' }) {
+  const cfg = refundStatusConfig[status] || refundStatusConfig.PENDING;
+  const padding = size === 'xs' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs';
+  return (
+    <span className={`badge ${padding} ${cfg.bg} ${cfg.text} transition-all duration-300`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+}
+
 export function getStatusConfig(status: OrderStatus) {
   return statusConfig[status];
 }
 
-export { statusConfig };
+export function getRefundStatusConfig(status: RefundStatus) {
+  return refundStatusConfig[status] || refundStatusConfig.PENDING;
+}
+
+export { statusConfig, refundStatusConfig };

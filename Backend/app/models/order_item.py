@@ -21,7 +21,7 @@ class OrderItem(Base):
     __tablename__ = "vgf_order_items"
 
     order_item_id = Column(
-        BigInteger,
+        BigInteger().with_variant(Integer, "sqlite"),
         primary_key=True,
         autoincrement=True,
     )
