@@ -6,7 +6,7 @@ import type { Delivery, DeliveryStage, DeliveryPartner } from '@/types/delivery'
 
 export const API_BASE_URL =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) ||
-  (typeof window !== 'undefined' ? '' : 'http://127.0.0.1:8000');
+  (typeof window !== 'undefined' ? '' : 'http://127.0.0.1:21107');
 
 let inMemoryToken: string | null = null;
 
