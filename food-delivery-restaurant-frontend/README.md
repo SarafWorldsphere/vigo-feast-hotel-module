@@ -1,3 +1,3 @@
-# food-delivery-restaurant-frontend
+# Food Delivery Restaurant Frontend
 
-[![Open in Bolt](https://bolt.new/static/open-in-bolt.svg)](https://bolt.new/~/sb1-x6c7gzkq)
+Restaurant management portal for the Food Delivery platform built with Next.js, React, and Tailwind CSS.
