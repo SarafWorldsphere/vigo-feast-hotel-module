@@ -101,6 +101,13 @@ class OrderListener:
         if not database_url:
             raise RuntimeError("DATABASE_URL is not configured")
 
+        # psycopg2.connect() requires a standard PostgreSQL URL.
+        database_url = database_url.replace(
+            "postgresql+psycopg2://",
+            "postgresql://",
+            1,
+        )
+
         parsed = urlparse(database_url)
 
         retry_delay = 1
