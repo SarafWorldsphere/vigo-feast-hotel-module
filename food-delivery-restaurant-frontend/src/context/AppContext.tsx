@@ -535,8 +535,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (isCancelled) return;
 
-        // Connect directly to the FastAPI WebSocket endpoint with auth token query param
-        const wsBase = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8000/api/v1/ws/orders';
+        const wsBase =
+          process.env.NEXT_PUBLIC_WS_URL ||
+          (typeof window !== 'undefined' &&
+          window.location.protocol === 'https:'
+            ? 'wss://restaurant.vigofeast.swais.in/api/v1/ws/orders'
+            : 'ws://127.0.0.1:21107/api/v1/ws/orders');
         const wsUrl = `${wsBase}${wsBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
         socket = new WebSocket(wsUrl);
 
