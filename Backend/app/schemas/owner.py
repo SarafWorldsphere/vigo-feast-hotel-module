@@ -8,6 +8,7 @@ class OwnerProfileResponse(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
+    profile_image_url: Optional[str] = None
     is_verified: bool
     is_active: bool
 

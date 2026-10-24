@@ -1,6 +1,5 @@
-import { useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { ChefHat, Clock, AlertCircle, ArrowLeft, RefreshCw, FileText } from 'lucide-react';
+import { ChefHat, AlertCircle, ArrowLeft, RefreshCw, FileText } from 'lucide-react';
 import { RegistrationStatus } from '@/services/api';
 import { AnimatedCheckmark, ConfettiBurst } from '@/components/ui/SuccessAnimation';
 
@@ -8,31 +7,15 @@ export function StatusScreenPage() {
   const {
     registrationStatus,
     statusDetails,
-    setRegistrationStatus,
     setAuthView,
     logout,
-    login,
+    enterDashboard,
     darkMode,
     toggleDarkMode,
   } = useApp();
 
-  const currentStatus = registrationStatus || statusDetails?.status || 'SUBMITTED';
-
-  // Automatically navigate directly to dashboard without buttons when verified/approved
-  useEffect(() => {
-    if (currentStatus === 'APPROVED') {
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('nfd_just_received_approval', 'true');
-        try {
-          localStorage.removeItem('nfd_approved_banner_dismissed');
-          if (statusDetails?.restaurant_id) {
-            localStorage.removeItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`);
-          }
-        } catch {}
-      }
-      login('APPROVED');
-    }
-  }, [currentStatus, login, statusDetails?.restaurant_id]);
+  // The application status comes directly from the server
+  const currentStatus: RegistrationStatus = statusDetails?.status || registrationStatus || 'SUBMITTED';
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 px-4 py-8 relative overflow-hidden">
@@ -66,15 +49,12 @@ export function StatusScreenPage() {
           {/* 1. SUBMITTED State with Celebratory Checkmark & Particle Burst */}
           {currentStatus === 'SUBMITTED' && (
             <div className="space-y-4 relative">
-              {/* Confetti Particle Burst in orange & emerald tones */}
               <ConfettiBurst count={20} className="-top-12" />
 
-              {/* Animated checkmark */}
               <div className="flex justify-center mb-2">
                 <AnimatedCheckmark size="lg" variant="emerald" />
               </div>
 
-              {/* Status Badge with scale + fade-in animation */}
               <div
                 className="flex justify-center"
                 style={{
@@ -204,7 +184,7 @@ export function StatusScreenPage() {
             </div>
           )}
 
-          {/* 3. REJECTED State (Case 5) */}
+          {/* 3. REJECTED State */}
           {currentStatus === 'REJECTED' && (
             <div className="space-y-4 animate-fade-in">
               <div className="w-16 h-16 rounded-2xl bg-red-50 dark:bg-red-500/10 flex items-center justify-center mx-auto mb-2 text-red-600 dark:text-red-400">
@@ -257,46 +237,80 @@ export function StatusScreenPage() {
             </div>
           )}
 
-          {/* Interactive preview status switcher */}
+          {/* 4. APPROVED State (when platform admin approves) */}
+          {currentStatus === 'APPROVED' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-center mb-2">
+                <AnimatedCheckmark size="lg" variant="emerald" />
+              </div>
+
+              <div className="flex justify-center">
+                <span className="badge px-3.5 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold text-xs border border-emerald-200/50 dark:border-emerald-500/20">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  APPROVED
+                </span>
+              </div>
+
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                  Application Approved!
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Your restaurant registration has been approved by the platform admin.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => enterDashboard()}
+                className="btn-primary w-full py-2.5 font-semibold"
+              >
+                Go to Dashboard
+              </button>
+            </div>
+          )}
+
+          {/* Read-Only Status Indicator Pills (No actions or API calls) */}
           <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-800">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                Preview Different Statuses
+                Application Status
+              </span>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium">
+                {currentStatus === 'APPROVED'
+                  ? 'Verified & Approved'
+                  : currentStatus === 'REJECTED'
+                  ? 'Action Required'
+                  : 'Awaiting Admin Review'}
               </span>
             </div>
-            <div className="grid grid-cols-4 gap-1">
-              {(['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED'] as RegistrationStatus[]).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => {
-                    if (st === 'APPROVED') {
-                      if (typeof window !== 'undefined') {
-                        sessionStorage.setItem('nfd_just_received_approval', 'true');
-                        try {
-                          localStorage.removeItem('nfd_approved_banner_dismissed');
-                          if (statusDetails?.restaurant_id) {
-                            localStorage.removeItem(`nfd_approved_banner_dismissed_${statusDetails.restaurant_id}`);
-                          }
-                        } catch {}
-                      }
-                      login('APPROVED');
-                    } else {
-                      setRegistrationStatus(st);
-                    }
-                  }}
-                  className={`px-1.5 py-1 rounded text-[10px] font-medium border transition-all ${
-                    currentStatus === st
-                      ? 'bg-brand-500 text-white border-brand-500 font-bold'
-                      : 'border-gray-200 dark:border-gray-800 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  {st === 'SUBMITTED' && 'Submitted'}
-                  {st === 'UNDER_REVIEW' && 'Review'}
-                  {st === 'APPROVED' && 'Approved'}
-                  {st === 'REJECTED' && 'Rejected'}
-                </button>
-              ))}
+            <div className="grid grid-cols-4 gap-1 select-none pointer-events-none" aria-readonly="true">
+              {[
+                { key: 'SUBMITTED', label: 'Submitted' },
+                { key: 'UNDER_REVIEW', label: 'In Review' },
+                { key: 'APPROVED', label: 'Approved' },
+                { key: 'REJECTED', label: 'Rejected' },
+              ].map(({ key, label }) => {
+                const isCurrent = currentStatus === key;
+                return (
+                  <div
+                    key={key}
+                    className={`px-1.5 py-1 rounded text-[10px] font-medium border text-center transition-all ${
+                      isCurrent
+                        ? key === 'APPROVED'
+                          ? 'bg-emerald-600 text-white border-emerald-600 font-bold shadow-sm'
+                          : key === 'REJECTED'
+                          ? 'bg-red-600 text-white border-red-600 font-bold shadow-sm'
+                          : key === 'UNDER_REVIEW'
+                          ? 'bg-amber-500 text-white border-amber-500 font-bold shadow-sm'
+                          : 'bg-brand-500 text-white border-brand-500 font-bold shadow-sm'
+                        : 'border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-500 bg-gray-50/50 dark:bg-gray-800/30'
+                    }`}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -64,6 +64,7 @@ export interface OwnerSession {
   name: string;
   email: string;
   phone: string;
+  profile_image_url?: string | null;
 }
 
 export interface Toast {
@@ -288,6 +289,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           name: me.name,
           email: me.email,
           phone: me.phone || '',
+          profile_image_url: me.profile_image_url ?? null,
         });
 
         try {
@@ -540,7 +542,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           (typeof window !== 'undefined' &&
           window.location.protocol === 'https:'
             ? 'wss://restaurant.vigofeast.swais.in/api/v1/ws/orders'
-            : 'ws://127.0.0.1:21107/api/v1/ws/orders');
+            : 'ws://127.0.0.1:8000/api/v1/ws/orders');
         const wsUrl = `${wsBase}${wsBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
         socket = new WebSocket(wsUrl);
 
@@ -767,6 +769,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           name: me.name,
           email: me.email,
           phone: me.phone || '',
+          profile_image_url: me.profile_image_url ?? null,
         });
       } catch {
         // ignore if not yet available

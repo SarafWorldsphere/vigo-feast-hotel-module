@@ -425,6 +425,7 @@ def get_current_owner_profile(
         "name": current_owner.name,
         "email": current_owner.email,
         "phone": current_owner.phone,
+        "profile_image_url": None,
         "is_active": current_owner.is_active,
         "is_verified": current_owner.is_verified,
     }

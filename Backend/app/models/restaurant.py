@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Float, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.database import Base
@@ -105,10 +105,13 @@ class Restaurant(Base):
 
     created_at = Column(
         DateTime(timezone=True),
-        nullable=True
+        nullable=False,
+        server_default=func.now(),
     )
 
     updated_at = Column(
         DateTime(timezone=True),
-        nullable=True
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

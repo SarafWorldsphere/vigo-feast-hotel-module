@@ -16,8 +16,6 @@ export function LoginPage() {
   const [password, setPassword] = useState('Password@123');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Status gating simulation helper for review testing
-  const [simulatedStatus, setSimulatedStatus] = useState<RegistrationStatus>('APPROVED');
 
   // OTP form
   const [phone, setPhone] = useState('');
@@ -181,9 +179,7 @@ export function LoginPage() {
           </div>
           <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1.5">Login Successful!</h2>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {simulatedStatus === 'APPROVED'
-              ? 'Opening your partner dashboard...'
-              : 'Checking registration status...'}
+            Checking registration status...
           </p>
         </div>
       </div>
@@ -459,34 +455,6 @@ export function LoginPage() {
             </div>
           )}
 
-          {/* Test Status Simulation Pill Selector */}
-          <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-800">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                Simulate Status on Login
-              </span>
-              <span className="text-[10px] text-brand-600 dark:text-brand-400 font-medium">Status Gating</span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(['APPROVED', 'SUBMITTED', 'UNDER_REVIEW', 'REJECTED'] as RegistrationStatus[]).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setSimulatedStatus(st)}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                    simulatedStatus === st
-                      ? 'bg-brand-50 dark:bg-brand-500/20 border-brand-400 dark:border-brand-500 text-brand-700 dark:text-brand-300 font-semibold'
-                      : 'border-gray-200 dark:border-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  {st === 'APPROVED' && '🟢 Approved (Dashboard)'}
-                  {st === 'SUBMITTED' && '🔵 Submitted'}
-                  {st === 'UNDER_REVIEW' && '🟡 Under Review'}
-                  {st === 'REJECTED' && '🔴 Rejected'}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
 
         {/* Register link (now links to Owner Signup) */}

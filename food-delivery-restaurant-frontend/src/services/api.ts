@@ -6,7 +6,7 @@ import type { Delivery, DeliveryStage, DeliveryPartner } from '@/types/delivery'
 
 export const API_BASE_URL =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) ||
-  (typeof window !== 'undefined' ? '' : 'http://127.0.0.1:21107');
+  (typeof window !== 'undefined' ? '' : (process.env.BACKEND_URL || 'http://127.0.0.1:8000'));
 
 let inMemoryToken: string | null = null;
 
@@ -59,6 +59,7 @@ export interface OwnerProfileResponse {
   name: string;
   email: string;
   phone?: string | null;
+  profile_image_url?: string | null;
   is_verified: boolean;
   is_active: boolean;
 }
@@ -1087,6 +1088,16 @@ export async function apiUpdateRestaurantAddress(
   return request<RestaurantAddressResponse>('/api/v1/restaurants/me/address', {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * GET /api/v1/owners/me
+ * Retrieves current owner details
+ */
+export async function apiGetOwnerMe(): Promise<OwnerProfileResponse> {
+  return request<OwnerProfileResponse>('/api/v1/owners/me', {
+    method: 'GET',
   });
 }
 

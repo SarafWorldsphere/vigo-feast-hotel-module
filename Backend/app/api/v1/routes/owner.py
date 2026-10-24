@@ -13,6 +13,10 @@ router = APIRouter(
 
 
 @router.get(
+    "/me",
+    response_model=OwnerProfileResponse,
+)
+@router.get(
     "/me/profile",
     response_model=OwnerProfileResponse,
 )

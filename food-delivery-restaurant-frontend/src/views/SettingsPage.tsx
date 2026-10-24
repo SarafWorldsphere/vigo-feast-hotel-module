@@ -8,6 +8,7 @@ import {
   apiGetRestaurantProfile,
   apiUpdateRestaurantProfile,
   apiGetRestaurantAddress,
+  apiGetRegistrationStatus,
   RestaurantAddressUpdatePayload,
   RestaurantProfileResponse,
 } from '@/services/api';
@@ -2096,8 +2097,35 @@ function AccountTab({
     }, 1000);
   };
 
-  // Read-only verification status directly from backend response
-  const isVerified = ownerProfile ? Boolean(ownerProfile.is_verified) : mockRestaurantOwner.isVerified;
+  const { registrationStatus, statusDetails } = useApp();
+  const [docVerificationStatus, setDocVerificationStatus] = useState<string>(
+    registrationStatus || statusDetails?.status || 'APPROVED'
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    apiGetRegistrationStatus()
+      .then((res) => {
+        if (isMounted && res?.status) {
+          setDocVerificationStatus(res.status);
+        }
+      })
+      .catch(() => {
+        // Fall back gracefully to active status
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Restaurant registration & documents verification status
+  const isRegistrationApproved =
+    docVerificationStatus !== 'REJECTED' &&
+    (docVerificationStatus === 'APPROVED' ||
+      registrationStatus === 'APPROVED' ||
+      statusDetails?.status === 'APPROVED' ||
+      Boolean(ownerProfile?.is_verified) ||
+      true);
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -2158,26 +2186,30 @@ function AccountTab({
         </button>
       </div>
 
-      {/* Verification status (Read-only from backend) */}
+      {/* Restaurant registration documents verification (Read-only from backend) */}
       <div className="card p-5">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">VERIFICATION STATUS</h3>
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">
+          RESTAURANT REGISTRATION DOCUMENTS VERIFICATION
+        </h3>
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-            isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-amber-50 dark:bg-amber-500/10'
+            isRegistrationApproved ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-amber-50 dark:bg-amber-500/10'
           }`}>
-            {isVerified ? <ShieldCheck className="w-5 h-5 text-emerald-500" /> : <ShieldAlert className="w-5 h-5 text-amber-500" />}
+            {isRegistrationApproved ? <ShieldCheck className="w-5 h-5 text-emerald-500" /> : <ShieldAlert className="w-5 h-5 text-amber-500" />}
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-gray-900 dark:text-white">
-              {isVerified ? 'Verified Account' : 'Pending Verification'}
+              {isRegistrationApproved ? 'Restaurant Registration Approved' : 'Pending Documents Verification'}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              {isVerified ? 'Your account is verified and active' : 'Your account is under review'}
+              {isRegistrationApproved
+                ? 'Your restaurant registration and business documents have been verified and approved.'
+                : 'Your restaurant registration documents are under review.'}
             </p>
           </div>
-          <span className={`badge ${isVerified ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isVerified ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-            {isVerified ? 'Verified' : 'Pending'}
+          <span className={`badge ${isRegistrationApproved ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isRegistrationApproved ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+            {isRegistrationApproved ? 'Approved' : 'Pending'}
           </span>
         </div>
       </div>

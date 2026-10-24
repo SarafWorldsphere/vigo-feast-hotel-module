@@ -1,10 +1,17 @@
 import { useApp } from '@/context/AppContext';
+import { useOwnerProfile } from '@/hooks/useOwnerProfile';
 import { useState, useEffect } from 'react';
 import { Wifi, WifiOff, ChevronDown, Clock, Menu as MenuIcon, Bell } from 'lucide-react';
 import { OfflinePanel } from './OfflinePanel';
 
 export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
-  const { availability, orderSettings, offlineUntil, unreadNotificationCount, setPage } = useApp();
+  const { owner, availability, orderSettings, offlineUntil, unreadNotificationCount, setPage } = useApp();
+  const { ownerProfile } = useOwnerProfile({ autoFetch: !owner?.name });
+
+  const currentOwner = owner || ownerProfile;
+  const ownerName = currentOwner?.name?.trim();
+  const ownerInitial = ownerName ? ownerName.charAt(0).toUpperCase() : 'V';
+  const profileImageUrl = currentOwner?.profile_image_url;
   const [showOfflinePanel, setShowOfflinePanel] = useState(false);
   const [offlineCountdown, setOfflineCountdown] = useState('');
 
@@ -121,11 +128,21 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
           )}
         </button>
         <div className="flex items-center gap-2.5 pl-2">
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
-            V
-          </div>
+          {profileImageUrl ? (
+            <img
+              src={profileImageUrl}
+              alt={ownerName || 'Owner'}
+              className="w-9 h-9 rounded-full object-cover shrink-0 border border-brand-200 dark:border-brand-800"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold shrink-0 shadow-sm">
+              {ownerInitial}
+            </div>
+          )}
           <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">VIGO FEAST</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
+              {ownerName || 'VIGO FEAST'}
+            </p>
             <p className="text-xs text-gray-400 dark:text-gray-500">Owner</p>
           </div>
         </div>

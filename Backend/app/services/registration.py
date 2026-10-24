@@ -1,5 +1,6 @@
 """Atomic restaurant-owner registration submission workflow."""
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -17,6 +18,9 @@ from app.models.restaurant_registration_application import (
 )
 from app.schemas.document import ALLOWED_DOCUMENT_TYPES
 from app.schemas.registration import RegistrationSubmitRequest
+
+
+logger = logging.getLogger(__name__)
 
 
 def _conflict_if_exists(db: Session, column, value: str | None, message: str) -> None:
@@ -167,6 +171,14 @@ def submit_registration(
             db.flush()
             restaurant_id, application_id = restaurant.id, application.id
     except IntegrityError as exc:
+        original_error = getattr(exc, "orig", None)
+        diag = getattr(original_error, "diag", None)
+        logger.error(
+            "Registration integrity conflict: sqlstate=%s, table=%s, column=%s",
+            getattr(original_error, "pgcode", None),
+            getattr(diag, "table_name", None),
+            getattr(diag, "column_name", None),
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Registration conflicts with existing data",

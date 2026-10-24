@@ -11,11 +11,11 @@ const navItems: { id: Page; label: string; icon: typeof LayoutDashboard; enabled
   { id: 'orders', label: 'Orders', icon: ShoppingBag, enabled: true },
   { id: 'menu', label: 'Menu', icon: UtensilsCrossed, enabled: true },
   { id: 'delivery', label: 'Delivery', icon: Truck, enabled: true },
-  { id: 'earnings', label: 'Earnings', icon: Wallet, enabled: true },
-  { id: 'refunds', label: 'Refunds', icon: RotateCcw, enabled: true },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: true },
   { id: 'offers', label: 'Offers', icon: Tag, enabled: true },
+  { id: 'refunds', label: 'Refunds', icon: RotateCcw, enabled: true },
   { id: 'reviews', label: 'Reviews', icon: Star, enabled: true },
+  { id: 'earnings', label: 'Earnings', icon: Wallet, enabled: true },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: true },
   { id: 'notifications', label: 'Notifications', icon: Bell, enabled: true },
   { id: 'settings', label: 'Settings', icon: Settings, enabled: true },
 ];
@@ -23,6 +23,7 @@ const navItems: { id: Page; label: string; icon: typeof LayoutDashboard; enabled
 export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const { currentPage, setPage, darkMode, toggleDarkMode, newOrderCount, logout } = useApp();
   const [tooltip, setTooltip] = useState<string | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const handleNav = (item: typeof navItems[0]) => {
     if (!item.enabled) return;
@@ -101,7 +102,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
           {!collapsed && <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>}
         </button>
         <button
-          onClick={logout}
+          onClick={() => setShowLogoutConfirm(true)}
           className={`nav-item w-full ${collapsed ? 'justify-center' : ''} text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer`}
           title="Sign out of partner account"
         >
@@ -109,6 +110,46 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
           {!collapsed && <span>Logout</span>}
         </button>
       </div>
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-fade-in"
+            onClick={() => setShowLogoutConfirm(false)}
+          />
+          <div className="relative card w-full max-w-sm p-6 text-center shadow-2xl rounded-2xl animate-scale-in z-10 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-500/10 text-red-600 dark:text-red-400 mx-auto flex items-center justify-center mb-4">
+              <LogOut className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-gray-900 dark:text-white mb-1.5">
+              Confirm Logout
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              Are you sure you want to logout?
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLogoutConfirm(false);
+                  logout();
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold shadow-sm transition-colors cursor-pointer"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
