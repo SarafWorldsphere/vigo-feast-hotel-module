@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { Utensils } from 'lucide-react';
 import { MenuItem } from '@/data/mockData';
 
 const foodImages: Record<string, string> = {
@@ -20,13 +22,33 @@ const foodImages: Record<string, string> = {
 };
 
 export function FoodImage({ image = '', name, className = '' }: { image?: string | null; name: string; className?: string }) {
-  const resolveUrl = (img?: string | null) => {
-    if (!img) return foodImages.paneer;
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setLoadFailed(false);
+  }, [image]);
+
+  const resolveUrl = (img?: string | null): string | null => {
+    if (!img || img === 'placeholder') return null;
     if (img.startsWith('/') || img.startsWith('http')) return img;
-    return foodImages[img] ?? foodImages.paneer;
+    return foodImages[img] ?? null;
   };
 
   const initialUrl = resolveUrl(image);
+
+  if (!initialUrl || loadFailed) {
+    return (
+      <div className={`relative overflow-hidden bg-gray-100 dark:bg-gray-800 flex flex-col items-center justify-center p-2 text-center text-gray-400 select-none ${className}`}>
+        <Utensils className="w-5 h-5 mb-1 text-gray-400 dark:text-gray-500 stroke-[1.5]" />
+        <span className="text-[11px] font-medium text-gray-600 dark:text-gray-400 line-clamp-1 leading-tight px-1">
+          {name}
+        </span>
+        <span className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5">
+          {initialUrl ? 'Image unavailable' : 'No photo'}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className={`relative overflow-hidden bg-gray-100 dark:bg-gray-800 ${className}`}>
@@ -34,12 +56,7 @@ export function FoodImage({ image = '', name, className = '' }: { image?: string
         src={initialUrl}
         alt={name}
         loading="lazy"
-        onError={(e) => {
-          const target = e.currentTarget;
-          if (target.src !== foodImages.paneer) {
-            target.src = foodImages.paneer;
-          }
-        }}
+        onError={() => setLoadFailed(true)}
         className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
       />
     </div>
@@ -47,7 +64,7 @@ export function FoodImage({ image = '', name, className = '' }: { image?: string
 }
 
 export function getFoodImage(image: string): string {
-  if (!image) return foodImages.paneer;
+  if (!image || image === 'placeholder') return foodImages.paneer;
   if (image.startsWith('/') || image.startsWith('http')) return image;
   return foodImages[image] ?? foodImages.paneer;
 }

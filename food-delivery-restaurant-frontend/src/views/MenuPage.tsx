@@ -1,14 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { MenuItem, ItemAvailability, Category } from '@/data/mockData';
 import { FoodImage } from '@/components/ui/FoodImage';
 import {
   Plus, Search, GripVertical, Eye, EyeOff, Clock, Star, X,
   ChevronUp, ChevronDown, Pencil, Check, ImagePlus, Leaf, Drumstick, Egg,
-  Loader2, Images, AlertCircle,
+  Loader2, AlertCircle, Upload,
 } from 'lucide-react';
-import { ImagePickerModal } from '@/components/menu/ImagePickerModal';
-import { MenuItemCreateRequest } from '@/services/api';
+import {
+  MenuItemCreateRequest,
+  apiCreateMenuImageUploadUrl,
+  apiConfirmMenuImageUpload,
+  uploadFileToPresignedUrl,
+  MenuImageContentType,
+} from '@/services/api';
 
 export function MenuPage() {
   const { menuItems, categories, loadCategories, updateMenuItem, updateMenuItemAvailability, addMenuItem, createMenuItem, reorderCategories, toggleCategoryVisible, addCategory, addToast } = useApp();
@@ -73,10 +78,10 @@ export function MenuPage() {
     }
   };
 
-  const handleAddItem = (newItem: Partial<MenuItem> | MenuItem) => {
-    addMenuItem(newItem as MenuItem);
+  const handleAddItem = async (newItem: Partial<MenuItem> | MenuItem) => {
     setIsAddingItem(false);
     addToast({ type: 'success', title: 'Item added', message: (newItem as MenuItem).name });
+    await loadCategories();
   };
 
   const handleAddCategory = async (name: string, visible: boolean) => {
@@ -216,7 +221,7 @@ export function MenuPage() {
                 style={{ animationDelay: `${i * 30}ms` }}
               >
               <div className="relative h-32 overflow-hidden">
-                <FoodImage image={item.image} name={item.name} className="w-full h-full" />
+                <FoodImage image={item.image_url || item.image} name={item.name} className="w-full h-full" />
                 <div className="absolute top-2 right-2">
                   <button
                     onClick={() => cycleAvailability(item)}
@@ -441,8 +446,9 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
   defaultCategory?: string;
   categories?: Category[];
   onClose: () => void;
-  onSave: (updates: Partial<MenuItem> | MenuItem) => Promise<void> | void;
+  onSave?: (updates: Partial<MenuItem> | MenuItem) => Promise<void> | void;
 }) {
+  const { createMenuItem, loadCategories, addToast } = useApp();
   const isAdd = mode === 'add';
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -451,13 +457,108 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
   const [availability, setAvailability] = useState<ItemAvailability>(item?.availability ?? 'AVAILABLE');
   const [category, setCategory] = useState(item?.category ?? defaultCategory ?? (categories[0]?.name || 'Main Course'));
   const [image, setImage] = useState(item?.image_url || item?.image || '');
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
   const [foodType, setFoodType] = useState<'VEG' | 'NON_VEG' | 'EGG'>(item?.foodType ?? 'VEG');
   const [allergens, setAllergens] = useState<string[]>(item?.allergens ?? []);
   const [variants, setVariants] = useState(item?.variants ?? []);
   const [addOnGroups, setAddOnGroups] = useState(item?.addOnGroups ?? []);
+
+  // Amazon S3 Image upload states
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileValidationError, setFileValidationError] = useState<string | null>(null);
+  const [uploadStage, setUploadStage] = useState<'idle' | 'requesting-url' | 'uploading' | 'confirming' | 'saving'>('idle');
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [confirmedImageKey, setConfirmedImageKey] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+  const ALLOWED_CONTENT_TYPES: MenuImageContentType[] = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+  ];
+
+  const validateImageFile = (file: File): string | null => {
+    if (!ALLOWED_CONTENT_TYPES.includes(file.type as MenuImageContentType)) {
+      return 'Invalid file type. Only JPEG, PNG, and WebP images are allowed.';
+    }
+    if (file.size <= 0) {
+      return 'Selected file is empty.';
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      const sizeInMb = (file.size / (1024 * 1024)).toFixed(2);
+      return `File size (${sizeInMb} MB) exceeds maximum allowed size of 5 MB.`;
+    }
+    return null;
+  };
+
+  const handleFileSelect = (file: File) => {
+    const validationErr = validateImageFile(file);
+    if (validationErr) {
+      setFileValidationError(validationErr);
+      return;
+    }
+    setFileValidationError(null);
+    setError('');
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setSelectedFile(file);
+    setPreviewUrl(objectUrl);
+    setImage(objectUrl);
+    setConfirmedImageKey(null);
+  };
+
+  const handleRemoveImage = () => {
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setImage('');
+    setConfirmedImageKey(null);
+    setFileValidationError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isSubmitting) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isSubmitting) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  };
 
   const availOptions: { value: ItemAvailability; label: string }[] = [
     { value: 'AVAILABLE', label: 'Available' },
@@ -499,46 +600,102 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
     setError('');
     setIsSubmitting(true);
 
+    let activeImageKey = confirmedImageKey;
+
     try {
+      // 1. If an image file was selected and not yet confirmed, run S3 presigned URL workflow
+      if (selectedFile && !activeImageKey) {
+        // Step A: Request Presigned Upload URL from backend
+        setUploadStage('requesting-url');
+        let uploadRes;
+        try {
+          uploadRes = await apiCreateMenuImageUploadUrl({
+            content_type: selectedFile.type as MenuImageContentType,
+            file_size_bytes: selectedFile.size,
+          });
+        } catch (err: any) {
+          throw new Error(`Failed to generate S3 upload URL: ${err.message || 'Server error'}`);
+        }
+
+        // Step B: Direct PUT upload to Amazon S3 (no auth headers or cookies)
+        setUploadStage('uploading');
+        setUploadProgress(0);
+        try {
+          await uploadFileToPresignedUrl(
+            uploadRes.upload_url,
+            selectedFile,
+            (pct) => {
+              setUploadProgress(pct);
+            },
+            uploadRes.content_type
+          );
+        } catch (err: any) {
+          throw new Error(`Failed to upload image to S3: ${err.message || 'Network error'}`);
+        }
+
+        // Step C: Confirm upload with backend
+        setUploadStage('confirming');
+        try {
+          const confirmRes = await apiConfirmMenuImageUpload({
+            object_key: uploadRes.object_key,
+          });
+          if (confirmRes.status !== 'CONFIRMED') {
+            throw new Error(`Image confirmation reported status '${confirmRes.status}'. Expected 'CONFIRMED'.`);
+          }
+          activeImageKey = confirmRes.object_key;
+          setConfirmedImageKey(activeImageKey);
+        } catch (err: any) {
+          throw new Error(`Failed to confirm image upload: ${err.message || 'Verification error'}`);
+        }
+      }
+
+      // Step D: Create or Update menu item
+      setUploadStage('saving');
       if (isAdd) {
-        const newItem: MenuItem = {
-          id: `m-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        const matchedCat = categories.find(
+          (c) => c.name.toLowerCase() === category.toLowerCase()
+        );
+        const createdItem = await createMenuItem({
+          category_id: matchedCat?.id,
+          category_name: matchedCat ? undefined : category,
           name: trimmedName,
-          description: description.trim(),
-          price: parsedPrice,
-          category: category || defaultCategory || 'Main Course',
-          prepTime: parsedPrepTime,
-          availability,
-          image: image || 'placeholder',
-          image_url: image || undefined,
-          rating: 5.0,
-          totalOrders: 0,
-          foodType,
-          allergens: allergens.length > 0 ? allergens : undefined,
-          variants: variants.length > 0 ? variants : undefined,
-          addOnGroups: addOnGroups.length > 0 ? addOnGroups : undefined,
-        };
-        await onSave(newItem);
-      } else {
-        await onSave({
-          name: trimmedName,
-          description: description.trim(),
-          price: parsedPrice,
-          category,
-          prepTime: parsedPrepTime,
-          availability,
-          image: image || 'placeholder',
-          image_url: image || undefined,
-          foodType,
-          allergens,
-          variants,
-          addOnGroups,
+          description: description.trim() || null,
+          image_key: activeImageKey || undefined,
+          base_price: parsedPrice,
+          food_type: foodType,
+          preparation_time_minutes: parsedPrepTime,
         });
+
+        if (onSave) {
+          await onSave(createdItem);
+        } else {
+          await loadCategories();
+          onClose();
+          addToast({ type: 'success', title: 'Menu item created', message: createdItem.name });
+        }
+      } else {
+        if (onSave) {
+          await onSave({
+            name: trimmedName,
+            description: description.trim(),
+            price: parsedPrice,
+            category,
+            prepTime: parsedPrepTime,
+            availability,
+            image: activeImageKey || image || 'placeholder',
+            image_url: activeImageKey || image || undefined,
+            foodType,
+            allergens,
+            variants,
+            addOnGroups,
+          });
+        }
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to save item. Please check backend connection.');
+      setError(err?.message || 'Failed to save menu item. Please try again.');
     } finally {
       setIsSubmitting(false);
+      setUploadStage('idle');
     }
   };
 
@@ -549,54 +706,143 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
           <h2 className="font-bold text-base text-gray-900 dark:text-white">{isAdd ? 'Add Item' : 'Edit Item'}</h2>
-          <button onClick={onClose} className="btn-ghost p-2">
+          <button onClick={onClose} disabled={isSubmitting} className="btn-ghost p-2">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Image picker section */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Item Image</label>
-              {image && (
+          {/* Image Upload & Selection Section */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                Item Image <span className="text-[11px] font-normal text-gray-400">(Optional)</span>
+              </label>
+              {(selectedFile || image) && (
                 <button
                   type="button"
-                  onClick={() => setImage('')}
-                  className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                  onClick={handleRemoveImage}
+                  disabled={isSubmitting}
+                  className="text-[11px] text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
                 >
                   Remove image
                 </button>
               )}
             </div>
-            <div className="mt-1 flex items-center gap-3.5">
-              <div className="relative w-20 h-20 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center overflow-hidden shrink-0 border border-gray-200 dark:border-gray-700">
-                {image ? (
+
+            {/* Hidden native file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              disabled={isSubmitting}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFileSelect(file);
+              }}
+            />
+
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`flex items-start gap-3.5 p-3 rounded-xl border transition-all ${
+                isDragging
+                  ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-500/10'
+                  : 'border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-850/40'
+              }`}
+            >
+              {/* Preview Thumbnail */}
+              <div className="relative w-20 h-20 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center overflow-hidden shrink-0 border border-gray-200 dark:border-gray-700 shadow-inner">
+                {previewUrl ? (
+                  <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
+                ) : image ? (
                   <FoodImage image={image} name={name || 'Item preview'} className="w-full h-full" />
                 ) : (
                   <ImagePlus className="w-6 h-6 text-gray-300 dark:text-gray-600" />
                 )}
+
+                {/* Upload overlay */}
+                {isSubmitting && uploadStage === 'uploading' && (
+                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white p-1">
+                    <Loader2 className="w-4 h-4 animate-spin text-brand-400 mb-0.5" />
+                    <span className="text-[10px] font-bold">{uploadProgress}%</span>
+                  </div>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsPickerOpen(true)}
-                  className="btn-secondary text-xs flex items-center gap-1.5 py-2 px-3 hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400 transition-all"
-                >
-                  <Images className="w-3.5 h-3.5" />
-                  Choose Image
-                </button>
-                {image ? (
-                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono truncate max-w-[200px]" title={image}>
-                    {image}
+
+              {/* Action Buttons & Status */}
+              <div className="flex-1 space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isSubmitting}
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400 transition-all disabled:opacity-50"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {selectedFile ? 'Change Photo' : 'Upload Photo'}
+                  </button>
+
+                </div>
+
+                {/* File info or help text */}
+                {selectedFile ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-300 truncate">
+                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span className="truncate font-medium" title={selectedFile.name}>{selectedFile.name}</span>
+                    <span className="text-gray-400 dark:text-gray-500 shrink-0">
+                      ({(selectedFile.size / 1024).toFixed(0)} KB)
+                    </span>
+                  </div>
+                ) : image ? (
+                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono truncate" title={image}>
+                    {image.startsWith('blob:') ? 'Local preview' : image}
                   </p>
                 ) : (
                   <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                    Select from available dish photos
+                    Drag & drop or choose JPEG, PNG, WebP up to 5 MB
+                  </p>
+                )}
+
+                {/* File validation error */}
+                {fileValidationError && (
+                  <p className="text-[11px] text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    {fileValidationError}
                   </p>
                 )}
               </div>
             </div>
+
+            {/* Progress bar during direct S3 PUT */}
+            {isSubmitting && uploadStage === 'uploading' && (
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span>Uploading directly to Amazon S3...</span>
+                  <span className="font-semibold text-brand-600 dark:text-brand-400">{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-brand-500 rounded-full transition-all duration-150"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Stage notification banner */}
+            {isSubmitting && uploadStage !== 'idle' && uploadStage !== 'uploading' && (
+              <div className="flex items-center gap-2 p-2 bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-300 rounded-lg text-xs">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-brand-500" />
+                <span>
+                  {uploadStage === 'requesting-url' && 'Requesting Amazon S3 upload authorization...'}
+                  {uploadStage === 'confirming' && 'Verifying uploaded image with server...'}
+                  {uploadStage === 'saving' && 'Saving menu item to database...'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Basic info */}
@@ -886,30 +1132,55 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
               {addOnGroups.length === 0 && <p className="text-xs text-gray-400 dark:text-gray-600">No add-on groups</p>}
             </div>
           </div>
-          {/* Error Message */}
+          {/* Error Message with Retry */}
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+            <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2 flex-1">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSubmitting}
+                className="btn-secondary text-[11px] py-1 px-2.5 shrink-0 bg-white dark:bg-gray-800 hover:bg-gray-50 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400"
+              >
+                Retry
+              </button>
             </div>
           )}
         </div>
 
         {/* Footer */}
         <div className="flex gap-2 p-4 border-t border-gray-200 dark:border-gray-800 sticky bottom-0 bg-white dark:bg-gray-900 z-10">
-          <button type="button" onClick={onClose} disabled={isSubmitting} className="btn-secondary flex-1">
+          <button type="button" onClick={onClose} disabled={isSubmitting} className="btn-secondary flex-1 disabled:opacity-50">
             Cancel
           </button>
           <button
             type="button"
             onClick={handleSave}
             disabled={isSubmitting}
-            className="btn-primary flex-1 flex items-center justify-center gap-1.5"
+            className="btn-primary flex-1 flex items-center justify-center gap-1.5 disabled:opacity-50"
           >
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>{isAdd ? 'Adding Item...' : 'Saving...'}</span>
+                <span>
+                  {uploadStage === 'uploading'
+                    ? `Uploading (${uploadProgress}%)...`
+                    : uploadStage === 'confirming'
+                    ? 'Confirming...'
+                    : uploadStage === 'requesting-url'
+                    ? 'Preparing...'
+                    : isAdd
+                    ? 'Adding Item...'
+                    : 'Saving...'}
+                </span>
+              </>
+            ) : error ? (
+              <>
+                <Upload className="w-4 h-4" />
+                <span>Retry</span>
               </>
             ) : (
               <>
@@ -921,13 +1192,6 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
         </div>
       </div>
 
-      {/* Image Picker Gallery Modal */}
-      <ImagePickerModal
-        isOpen={isPickerOpen}
-        currentImage={image}
-        onSelect={(selectedPath) => setImage(selectedPath)}
-        onClose={() => setIsPickerOpen(false)}
-      />
     </div>
   );
 }

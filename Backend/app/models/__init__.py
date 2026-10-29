@@ -27,3 +27,5 @@ from app.models.restaurant_special_hours import RestaurantSpecialHours
 from app.models.restaurant_hour_slot import RestaurantHourSlot
 from app.models.restaurant_order_settings import RestaurantOrderSettings
 from app.models.restaurant_notifications import RestaurantNotification
+from app.models.media_upload import MediaUpload
+from app.models.registration_document_upload import RegistrationDocumentUpload

@@ -18,8 +18,18 @@ import {
   Pencil,
   Loader2,
   UserCheck,
+  AlertCircle,
 } from 'lucide-react';
-import { apiGetCuisines, CuisineOption, RegistrationSubmitRequest } from '@/services/api';
+import {
+  apiGetCuisines,
+  CuisineOption,
+  RegistrationSubmitRequest,
+  RegistrationDocumentType,
+  RegistrationDocumentContentType,
+  apiCreateRegistrationDocumentUploadUrl,
+  apiConfirmRegistrationDocumentUpload,
+  uploadFileToPresignedUrl,
+} from '@/services/api';
 
 // 5 Steps (Owner details decoupled and shown as read-only summary chip at top)
 const steps = [
@@ -29,6 +39,135 @@ const steps = [
   { id: 3, label: 'Documents', icon: UploadCloud },
   { id: 4, label: 'Review', icon: ClipboardCheck },
 ];
+
+export type RegistrationDocKey = 'fssaiCert' | 'panCard' | 'cheque' | 'photo';
+
+export interface DocumentUploadItemState {
+  file: File | null;
+  fileName: string | null;
+  fileSizeBytes: number;
+  mimeType: string | null;
+  objectKey: string | null;
+  isUploading: boolean;
+  progress: number;
+  isConfirmed: boolean;
+  error: string | null;
+}
+
+const createInitialDocState = (): DocumentUploadItemState => ({
+  file: null,
+  fileName: null,
+  fileSizeBytes: 0,
+  mimeType: null,
+  objectKey: null,
+  isUploading: false,
+  progress: 0,
+  isConfirmed: false,
+  error: null,
+});
+
+interface DocConfig {
+  key: RegistrationDocKey;
+  documentType: RegistrationDocumentType;
+  label: string;
+  description: string;
+  icon: typeof FileCheck;
+  accept: string;
+  allowedTypes: RegistrationDocumentContentType[];
+}
+
+const DOC_CONFIGS: Record<RegistrationDocKey, DocConfig> = {
+  fssaiCert: {
+    key: 'fssaiCert',
+    documentType: 'FSSAI_CERTIFICATE',
+    label: 'FSSAI Certificate',
+    description: 'Food safety license certificate (PDF, JPEG, PNG, WebP up to 10 MB)',
+    icon: FileCheck,
+    accept: '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp',
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+  },
+  panCard: {
+    key: 'panCard',
+    documentType: 'PAN_CARD',
+    label: 'PAN Card',
+    description: 'Business or proprietor PAN card (PDF, JPEG, PNG, WebP up to 10 MB)',
+    icon: CreditCard,
+    accept: '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp',
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+  },
+  cheque: {
+    key: 'cheque',
+    documentType: 'BANK_PROOF',
+    label: 'Cancelled Cheque / Bank Proof',
+    description: 'Account number & IFSC proof (PDF, JPEG, PNG, WebP up to 10 MB)',
+    icon: Hash,
+    accept: '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp',
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+  },
+  photo: {
+    key: 'photo',
+    documentType: 'RESTAURANT_PHOTO',
+    label: 'Restaurant Photo / Logo',
+    description: 'Storefront photo or brand logo (JPEG, PNG, WebP up to 10 MB)',
+    icon: ImageIcon,
+    accept: '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp',
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp'],
+  },
+};
+
+function validateDocumentFile(
+  file: File,
+  config: DocConfig
+): { error: string | null; contentType: RegistrationDocumentContentType | null } {
+  const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+
+  if (!file || file.size <= 0) {
+    return { error: 'Selected file is empty.', contentType: null };
+  }
+
+  if (file.size > MAX_SIZE) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    return {
+      error: `File size (${sizeMb} MB) exceeds maximum allowed size of 10 MB.`,
+      contentType: null,
+    };
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+
+  const extToContentType: Record<string, RegistrationDocumentContentType> = {
+    pdf: 'application/pdf',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+  };
+
+  const detectedContentType = extToContentType[extension];
+
+  if (!detectedContentType) {
+    return {
+      error: 'Unsupported file format. Please upload PDF, JPEG, PNG, or WebP.',
+      contentType: null,
+    };
+  }
+
+  if (config.documentType === 'RESTAURANT_PHOTO' && detectedContentType === 'application/pdf') {
+    return {
+      error: 'Restaurant photos must be JPEG, PNG, or WebP images.',
+      contentType: null,
+    };
+  }
+
+  if (!config.allowedTypes.includes(detectedContentType)) {
+    return {
+      error: `Invalid file type for ${config.label}. Allowed: ${config.allowedTypes.join(', ')}`,
+      contentType: null,
+    };
+  }
+
+  return { error: null, contentType: detectedContentType };
+}
 
 interface FormData {
   // Restaurant (Step 0)
@@ -52,12 +191,7 @@ interface FormData {
   cuisines: string[];
 
   // Documents (Step 3)
-  documents: {
-    fssaiCert: boolean;
-    panCard: boolean;
-    cheque: boolean;
-    photo: boolean;
-  };
+  documents: Record<RegistrationDocKey, DocumentUploadItemState>;
 }
 
 export function RegisterPage() {
@@ -86,7 +220,12 @@ export function RegisterPage() {
     ifsc: '',
     upiId: '',
     cuisines: [],
-    documents: { fssaiCert: false, panCard: false, cheque: false, photo: false },
+    documents: {
+      fssaiCert: createInitialDocState(),
+      panCard: createInitialDocState(),
+      cheque: createInitialDocState(),
+      photo: createInitialDocState(),
+    },
   }));
 
   // Fetch available cuisines via GET /api/v1/cuisines
@@ -128,6 +267,115 @@ export function RegisterPage() {
     });
     setError('');
   };
+
+  const handleFileUpload = async (key: RegistrationDocKey, file: File) => {
+    const config = DOC_CONFIGS[key];
+    const { error: validationErr, contentType } = validateDocumentFile(file, config);
+
+    if (validationErr || !contentType) {
+      setData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [key]: {
+            ...prev.documents[key],
+            error: validationErr || 'Invalid file format or size.',
+            isUploading: false,
+          },
+        },
+      }));
+      return;
+    }
+
+    // Set uploading state with initial progress
+    setData((prev) => ({
+      ...prev,
+      documents: {
+        ...prev.documents,
+        [key]: {
+          file,
+          fileName: file.name,
+          fileSizeBytes: file.size,
+          mimeType: contentType,
+          objectKey: null,
+          isUploading: true,
+          progress: 0,
+          isConfirmed: false,
+          error: null,
+        },
+      },
+    }));
+
+    try {
+      // 1. Request presigned upload URL from backend
+      const uploadUrlRes = await apiCreateRegistrationDocumentUploadUrl({
+        document_type: config.documentType,
+        file_name: file.name,
+        content_type: contentType,
+        file_size_bytes: file.size,
+      });
+
+      // 2. Direct PUT upload to S3 (no auth headers sent to S3)
+      await uploadFileToPresignedUrl(
+        uploadUrlRes.upload_url,
+        file,
+        (progressPercent) => {
+          setData((prev) => ({
+            ...prev,
+            documents: {
+              ...prev.documents,
+              [key]: {
+                ...prev.documents[key],
+                progress: progressPercent,
+              },
+            },
+          }));
+        },
+        uploadUrlRes.content_type
+      );
+
+      // 3. Confirm upload with backend
+      const confirmRes = await apiConfirmRegistrationDocumentUpload({
+        object_key: uploadUrlRes.object_key,
+      });
+
+      // 4. Mark confirmed only after backend confirmation succeeds
+      setData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [key]: {
+            file,
+            fileName: confirmRes.file_name || file.name,
+            fileSizeBytes: confirmRes.file_size_bytes || file.size,
+            mimeType: confirmRes.content_type || contentType,
+            objectKey: confirmRes.object_key,
+            isUploading: false,
+            progress: 100,
+            isConfirmed: true,
+            error: null,
+          },
+        },
+      }));
+    } catch (err: any) {
+      console.error(`Failed to upload ${config.label}:`, err);
+      setData((prev) => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [key]: {
+            ...prev.documents[key],
+            isUploading: false,
+            progress: 0,
+            isConfirmed: false,
+            error: err?.message || `Failed to upload ${config.label}. Please try again.`,
+          },
+        },
+      }));
+    }
+  };
+
+  const isAnyDocumentUploading = Object.values(data.documents).some((d) => d.isUploading);
 
   const validateStep = (s: number): boolean => {
     // Step 0: Restaurant Details
@@ -182,8 +430,12 @@ export function RegisterPage() {
     // Step 3: Documents
     if (s === 3) {
       const d = data.documents;
-      if (!d.fssaiCert || !d.panCard || !d.cheque || !d.photo) {
-        setError('Please upload all 4 required verification documents');
+      if (isAnyDocumentUploading) {
+        setError('Please wait for all documents to finish uploading.');
+        return false;
+      }
+      if (!d.fssaiCert.isConfirmed || !d.panCard.isConfirmed || !d.cheque.isConfirmed || !d.photo.isConfirmed) {
+        setError('Please upload and verify all 4 required verification documents');
         return false;
       }
     }
@@ -206,53 +458,70 @@ export function RegisterPage() {
   // Final Action on Step 4 (Review): calls POST /api/v1/restaurants/registration/submit
   const handleSubmit = async () => {
     setError('');
+
+    if (isAnyDocumentUploading) {
+      setError('Please wait for document uploads to finish before submitting.');
+      return;
+    }
+
+    const d = data.documents;
+    if (!d.fssaiCert.isConfirmed || !d.panCard.isConfirmed || !d.cheque.isConfirmed || !d.photo.isConfirmed) {
+      setError('Please upload and verify all 4 required verification documents.');
+      return;
+    }
+
+    if (!d.fssaiCert.objectKey || !d.panCard.objectKey || !d.cheque.objectKey || !d.photo.objectKey) {
+      setError('One or more documents do not have a confirmed S3 storage key. Please re-upload.');
+      return;
+    }
+
     setSubmitting(true);
 
     const payload: RegistrationSubmitRequest = {
       restaurant: {
-        name: data.restaurantName,
-        description: data.description || undefined,
-        address_line1: data.address,
-        city: data.city,
-        state: data.state || 'Karnataka',
-        postal_code: data.pincode,
+        name: data.restaurantName.trim(),
+        description: data.description?.trim() || undefined,
+        address_line1: data.address.trim(),
+        city: data.city.trim(),
+        state: data.state?.trim() || 'Karnataka',
+        postal_code: data.pincode.trim(),
         phone: owner?.phone && owner.phone.trim().length >= 10 ? owner.phone.trim() : undefined,
         email: owner?.email && owner.email.includes('@') ? owner.email.trim() : undefined,
       },
       business_details: {
         fssai_license_no: data.fssai.trim(),
-        gst_number: data.gst.trim() || undefined,
+        gst_number: data.gst?.trim() || undefined,
         pan_number: data.pan.trim().toUpperCase(),
         bank_name: data.bankName.trim(),
         account_number: data.accountNumber.trim(),
         ifsc_code: data.ifsc.trim().toUpperCase(),
-        upi_id: data.upiId.trim() || undefined,
+        upi_id: data.upiId?.trim() || undefined,
       },
       cuisine_ids: data.cuisines,
       documents: [
         {
           document_type: 'FSSAI_CERTIFICATE',
-          file_url: 'https://storage.vigofeast.com/docs/fssai_certificate.pdf',
-          file_name: 'fssai_certificate.pdf',
-          mime_type: 'application/pdf',
+          file_url: d.fssaiCert.objectKey,
+          file_name: d.fssaiCert.fileName || undefined,
+          mime_type: d.fssaiCert.mimeType || undefined,
         },
         {
           document_type: 'PAN_CARD',
-          file_url: 'https://storage.vigofeast.com/docs/pan_card.jpg',
-          file_name: 'pan_card.jpg',
-          mime_type: 'image/jpeg',
+          file_url: d.panCard.objectKey,
+          file_name: d.panCard.fileName || undefined,
+          mime_type: d.panCard.mimeType || undefined,
         },
         {
           document_type: 'BANK_PROOF',
-          file_url: 'https://storage.vigofeast.com/docs/cancelled_cheque.pdf',
-          file_name: 'cancelled_cheque.pdf',
-          mime_type: 'application/pdf',
+          file_url: d.cheque.objectKey,
+          file_name: d.cheque.fileName || undefined,
+          mime_type: d.cheque.mimeType || undefined,
         },
         {
           document_type: 'RESTAURANT_PHOTO',
-          file_url: 'https://storage.vigofeast.com/docs/restaurant_photo.jpg',
-          file_name: 'restaurant_photo.jpg',
-          mime_type: 'image/jpeg',
+          file_url: d.photo.objectKey,
+          file_name: d.photo.fileName || undefined,
+          mime_type: d.photo.mimeType || undefined,
         },
       ],
     };
@@ -574,37 +843,33 @@ export function RegisterPage() {
                 <div>
                   <h3 className="text-sm font-bold text-gray-900 dark:text-white">Upload Verification Documents</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    Click each item to simulate uploading required compliance documents.
+                    Upload official compliance documents to secure S3 storage (PDF, JPEG, PNG, or WebP up to 10 MB).
                   </p>
                 </div>
 
                 <UploadCard
-                  label="FSSAI Certificate"
-                  description="Food safety license certificate (PDF/JPG)"
-                  icon={FileCheck}
-                  uploaded={data.documents.fssaiCert}
-                  onUpload={() => update('documents', { ...data.documents, fssaiCert: true })}
+                  config={DOC_CONFIGS.fssaiCert}
+                  state={data.documents.fssaiCert}
+                  onUpload={(file) => handleFileUpload('fssaiCert', file)}
+                  disabled={submitting}
                 />
                 <UploadCard
-                  label="PAN Card"
-                  description="Business or proprietor PAN card"
-                  icon={CreditCard}
-                  uploaded={data.documents.panCard}
-                  onUpload={() => update('documents', { ...data.documents, panCard: true })}
+                  config={DOC_CONFIGS.panCard}
+                  state={data.documents.panCard}
+                  onUpload={(file) => handleFileUpload('panCard', file)}
+                  disabled={submitting}
                 />
                 <UploadCard
-                  label="Cancelled Cheque / Bank Proof"
-                  description="Account number & IFSC proof"
-                  icon={Hash}
-                  uploaded={data.documents.cheque}
-                  onUpload={() => update('documents', { ...data.documents, cheque: true })}
+                  config={DOC_CONFIGS.cheque}
+                  state={data.documents.cheque}
+                  onUpload={(file) => handleFileUpload('cheque', file)}
+                  disabled={submitting}
                 />
                 <UploadCard
-                  label="Restaurant Photo / Logo"
-                  description="Storefront photo or brand logo"
-                  icon={ImageIcon}
-                  uploaded={data.documents.photo}
-                  onUpload={() => update('documents', { ...data.documents, photo: true })}
+                  config={DOC_CONFIGS.photo}
+                  state={data.documents.photo}
+                  onUpload={(file) => handleFileUpload('photo', file)}
+                  disabled={submitting}
                 />
               </div>
             )}
@@ -681,10 +946,30 @@ export function RegisterPage() {
                   title="Uploaded Documents"
                   onEdit={() => setStep(3)}
                   rows={[
-                    { label: 'FSSAI Certificate', value: data.documents.fssaiCert ? 'Uploaded' : 'Pending' },
-                    { label: 'PAN Card', value: data.documents.panCard ? 'Uploaded' : 'Pending' },
-                    { label: 'Bank Proof', value: data.documents.cheque ? 'Uploaded' : 'Pending' },
-                    { label: 'Restaurant Photo', value: data.documents.photo ? 'Uploaded' : 'Pending' },
+                    {
+                      label: 'FSSAI Certificate',
+                      value: data.documents.fssaiCert.isConfirmed
+                        ? `${data.documents.fssaiCert.fileName || 'Uploaded'} (Verified)`
+                        : 'Pending',
+                    },
+                    {
+                      label: 'PAN Card',
+                      value: data.documents.panCard.isConfirmed
+                        ? `${data.documents.panCard.fileName || 'Uploaded'} (Verified)`
+                        : 'Pending',
+                    },
+                    {
+                      label: 'Bank Proof',
+                      value: data.documents.cheque.isConfirmed
+                        ? `${data.documents.cheque.fileName || 'Uploaded'} (Verified)`
+                        : 'Pending',
+                    },
+                    {
+                      label: 'Restaurant Photo',
+                      value: data.documents.photo.isConfirmed
+                        ? `${data.documents.photo.fileName || 'Uploaded'} (Verified)`
+                        : 'Pending',
+                    },
                   ]}
                 />
               </div>
@@ -700,7 +985,7 @@ export function RegisterPage() {
                 type="button"
                 onClick={handleBack}
                 className="btn-secondary flex-1"
-                disabled={submitting}
+                disabled={submitting || isAnyDocumentUploading}
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
@@ -709,6 +994,7 @@ export function RegisterPage() {
                 type="button"
                 onClick={() => setAuthView('login')}
                 className="btn-secondary flex-1"
+                disabled={submitting}
               >
                 <ArrowLeft className="w-4 h-4" /> Back to Login
               </button>
@@ -719,6 +1005,7 @@ export function RegisterPage() {
                 type="button"
                 onClick={handleNext}
                 className="btn-primary flex-1"
+                disabled={submitting || isAnyDocumentUploading}
               >
                 Next <ArrowRight className="w-4 h-4" />
               </button>
@@ -726,7 +1013,7 @@ export function RegisterPage() {
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting}
+                disabled={submitting || isAnyDocumentUploading}
                 className="btn-primary flex-1"
               >
                 {submitting ? (
@@ -758,51 +1045,150 @@ export function RegisterPage() {
 }
 
 function UploadCard({
-  label,
-  description,
-  icon: Icon,
-  uploaded,
+  config,
+  state,
   onUpload,
+  disabled,
 }: {
-  label: string;
-  description?: string;
-  icon: typeof FileCheck;
-  uploaded: boolean;
-  onUpload: () => void;
+  config: DocConfig;
+  state: DocumentUploadItemState;
+  onUpload: (file: File) => void;
+  disabled?: boolean;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const Icon = config.icon;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onUpload(file);
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onUpload}
-      className={`w-full p-4 rounded-xl border-2 border-dashed transition-all text-left ${
-        uploaded
-          ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-500/5'
-          : 'border-gray-200 dark:border-gray-700 hover:border-brand-400 hover:bg-brand-50/30 dark:hover:bg-brand-500/5'
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${config.label} upload card`}
+      onClick={() => {
+        if (!state.isUploading && !disabled) {
+          fileInputRef.current?.click();
+        }
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !state.isUploading && !disabled) {
+          e.preventDefault();
+          fileInputRef.current?.click();
+        }
+      }}
+      className={`w-full p-4 rounded-xl border-2 border-dashed transition-all text-left select-none outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
+        state.isUploading
+          ? 'border-brand-400 dark:border-brand-500/40 bg-brand-50/20 dark:bg-brand-500/5 cursor-wait'
+          : state.isConfirmed
+          ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-500/5 hover:border-emerald-400 cursor-pointer'
+          : state.error
+          ? 'border-red-300 dark:border-red-500/40 bg-red-50/40 dark:bg-red-500/5 hover:border-red-400 cursor-pointer'
+          : 'border-gray-200 dark:border-gray-700 hover:border-brand-400 hover:bg-brand-50/30 dark:hover:bg-brand-500/5 cursor-pointer'
       }`}
     >
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept={config.accept}
+        onChange={handleFileChange}
+        disabled={state.isUploading || disabled}
+        className="hidden"
+      />
       <div className="flex items-center gap-3">
         <div
-          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-            uploaded ? 'bg-emerald-100 dark:bg-emerald-500/10' : 'bg-gray-100 dark:bg-gray-800'
+          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+            state.isUploading
+              ? 'bg-brand-50 dark:bg-brand-500/10 border-brand-200 dark:border-brand-800'
+              : state.isConfirmed
+              ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800'
+              : state.error
+              ? 'bg-red-100 dark:bg-red-500/10 border-red-200 dark:border-red-800'
+              : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
           }`}
         >
-          {uploaded ? <Check className="w-5 h-5 text-emerald-500" /> : <Icon className="w-5 h-5 text-gray-400" />}
+          {state.isUploading ? (
+            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
+          ) : state.isConfirmed ? (
+            <Check className="w-5 h-5 text-emerald-500" />
+          ) : state.error ? (
+            <AlertCircle className="w-5 h-5 text-red-500" />
+          ) : (
+            <Icon className="w-5 h-5 text-gray-400" />
+          )}
         </div>
+
         <div className="flex-1 min-w-0">
           <p
-            className={`text-sm font-semibold ${
-              uploaded ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-800 dark:text-gray-200'
+            className={`text-sm font-semibold truncate ${
+              state.isConfirmed
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : state.error
+                ? 'text-red-700 dark:text-red-400'
+                : 'text-gray-800 dark:text-gray-200'
             }`}
           >
-            {label}
+            {config.label}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            {uploaded ? 'Uploaded successfully' : description || 'Tap to upload (mock)'}
-          </p>
+
+          {state.isUploading ? (
+            <div className="space-y-1 mt-1">
+              <p className="text-xs text-brand-600 dark:text-brand-400 font-medium">
+                Uploading to S3... {state.progress}%
+              </p>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-brand-500 h-full transition-all duration-200"
+                  style={{ width: `${state.progress}%` }}
+                />
+              </div>
+            </div>
+          ) : state.isConfirmed ? (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 truncate">
+              {state.fileName} {state.fileSizeBytes > 0 && `(${formatFileSize(state.fileSizeBytes)})`} • Tap to replace
+            </p>
+          ) : state.error ? (
+            <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+              {state.error} • Tap to retry
+            </p>
+          ) : (
+            <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+              {config.description}
+            </p>
+          )}
         </div>
-        {!uploaded && <UploadCloud className="w-5 h-5 text-gray-300 dark:text-gray-600" />}
+
+        <div className="shrink-0 flex items-center gap-1.5">
+          {state.isUploading ? (
+            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
+          ) : state.isConfirmed ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <Check className="w-3.5 h-3.5" /> Verified
+            </span>
+          ) : state.error ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+              Retry
+            </span>
+          ) : (
+            <UploadCloud className="w-5 h-5 text-gray-300 dark:text-gray-600" />
+          )}
+        </div>
       </div>
-    </button>
+    </div>
   );
 }
 

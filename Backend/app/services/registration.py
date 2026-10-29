@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 from app.models.business_details import RestaurantBusinessDetails
 from app.models.cuisine import CuisineType, RestaurantCuisine
 from app.models.document import RestaurantDocument
+from app.models.registration_document_upload import (
+    RegistrationDocumentUpload,
+)
 from app.models.restaurant import Restaurant
 from app.models.restaurant_owner import RestaurantOwner
 from app.models.restaurant_registration_application import (
@@ -81,6 +84,72 @@ def submit_registration(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Owner account not found or inactive",
                 )
+
+            # Validate uploaded documents belong to this owner and are confirmed.
+            submitted_keys = [
+                document.file_url for document in payload.documents
+            ]
+
+            if len(set(submitted_keys)) != len(submitted_keys):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Duplicate document uploads are not allowed",
+                )
+
+            uploads = (
+                db.query(RegistrationDocumentUpload)
+                .filter(
+                    RegistrationDocumentUpload.owner_id == owner_id,
+                    RegistrationDocumentUpload.object_key.in_(submitted_keys),
+                    RegistrationDocumentUpload.status == "CONFIRMED",
+                )
+                .with_for_update()
+                .all()
+                if submitted_keys
+                else []
+            )
+
+            uploads_by_key = {
+                upload.object_key: upload for upload in uploads
+            }
+
+            if len(uploads_by_key) != len(payload.documents):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Every document must be uploaded and confirmed "
+                        "by the current owner before submission"
+                    ),
+                )
+
+            for document in payload.documents:
+                upload = uploads_by_key.get(document.file_url)
+
+                if not upload or upload.document_type != document.document_type:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Document type does not match its confirmed upload"
+                        ),
+                    )
+
+                if (
+                    document.file_name is not None
+                    and document.file_name != upload.file_name
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Document filename does not match its upload",
+                    )
+
+                if (
+                    document.mime_type is not None
+                    and document.mime_type != upload.content_type
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Document content type does not match its upload",
+                    )
 
             if db.query(Restaurant.id).filter(Restaurant.owner_id == owner_id).first():
                 raise HTTPException(
@@ -159,6 +228,10 @@ def submit_registration(
                 )
                 for document in payload.documents
             ])
+
+            for upload in uploads:
+                upload.status = "CONSUMED"
+                upload.consumed_at = datetime.now(timezone.utc)
 
             application = RestaurantRegistrationApplication(
                 restaurant_id=restaurant.id,

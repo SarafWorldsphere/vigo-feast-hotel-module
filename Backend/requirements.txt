@@ -7,3 +7,4 @@ bcrypt
 python-jose[cryptography]
 pydantic[email]
 httpx
+boto3

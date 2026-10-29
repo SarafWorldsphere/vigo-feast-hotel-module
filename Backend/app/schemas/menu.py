@@ -31,7 +31,7 @@ class MenuItemCreateRequest(BaseModel):
     category_name: str | None = None
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
-    image_url: str | None = None
+    image_key: str | None = None
     base_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     food_type: Literal["VEG", "NON_VEG", "EGG"] = "VEG"
     preparation_time_minutes: int = Field(default=10, ge=0)
@@ -78,13 +78,13 @@ class MenuItemResponse(BaseModel):
     category_id: UUID
     name: str
     description: str | None
-    image_url: str | None
+    image_url: str | None = None
     base_price: Decimal
     food_type: str
     preparation_time_minutes: int
     availability_status: str
     display_order: int
-    is_active: bool
+    is_active: bool = True
 
     class Config:
         from_attributes = True

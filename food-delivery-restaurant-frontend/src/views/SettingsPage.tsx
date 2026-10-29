@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import {
   mockRestaurantProfile, mockRestaurantOwner, operatingHours as defaultHours,
@@ -9,9 +9,13 @@ import {
   apiUpdateRestaurantProfile,
   apiGetRestaurantAddress,
   apiGetRegistrationStatus,
+  apiCreateRestaurantImageUploadUrl,
+  apiConfirmRestaurantImageUpload,
+  uploadFileToPresignedUrl,
   RestaurantAddressUpdatePayload,
   RestaurantProfileResponse,
 } from '@/services/api';
+
 
 import {
   useUpdateRestaurantAddress,
@@ -217,9 +221,30 @@ function ProfileTab({
 
 
   // Images state
-  const [savedImages, setSavedImages] = useState({ logo: false, cover: false });
-  const [images, setImages] = useState({ logo: false, cover: false });
-  const [updatingImages, setUpdatingImages] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [logoProgress, setLogoProgress] = useState(0);
+  const [coverProgress, setCoverProgress] = useState(0);
+  const [selectedLogoFile, setSelectedLogoFile] = useState<File | null>(null);
+  const [selectedCoverFile, setSelectedCoverFile] = useState<File | null>(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
+  const [isUpdatingImages, setIsUpdatingImages] = useState(false);
+
+  // Cleanup temporary local blob URLs on unmount or replace
+  useEffect(() => {
+    return () => {
+      if (logoPreviewUrl) {
+        URL.revokeObjectURL(logoPreviewUrl);
+      }
+      if (coverPreviewUrl) {
+        URL.revokeObjectURL(coverPreviewUrl);
+      }
+    };
+  }, [logoPreviewUrl, coverPreviewUrl]);
+
 
   // Basic info state
   const [savedBasic, setSavedBasic] = useState({
@@ -254,9 +279,8 @@ function ProfileTab({
   const { updateAddress, isUpdating: updatingAddress } = useUpdateRestaurantAddress();
 
   // Scoped dirty state checks
-  const isImagesDirty =
-    images.logo !== savedImages.logo ||
-    images.cover !== savedImages.cover;
+
+  const isImagesDirty = Boolean(selectedLogoFile || selectedCoverFile);
 
   const isBasicDirty =
     basic.name !== savedBasic.name ||
@@ -290,13 +314,13 @@ function ProfileTab({
     setBasic(initial);
 
     if (profile.images) {
-      const imgState = {
-        logo: Boolean(profile.images.logo_url),
-        cover: Boolean(profile.images.cover_image_url),
-      };
-      setSavedImages(imgState);
-      setImages(imgState);
+      setLogoUrl(profile.images.logo_url || null);
+      setCoverUrl(profile.images.cover_image_url || null);
+    } else {
+      setLogoUrl((profile as any).logo_url || null);
+      setCoverUrl((profile as any).cover_image_url || null);
     }
+
 
     if (profile.address) {
       const initialAddr = {
@@ -322,21 +346,183 @@ function ProfileTab({
 
 
   // Handlers
-  const handleUpdateImages = () => {
-    if (!isImagesDirty || updatingImages) return;
-    setUpdatingImages(true);
-    setTimeout(() => {
-      setSavedImages({ ...images });
-      setUpdatingImages(false);
+  const handleSelectImage = (imageType: 'logo' | 'cover', file: File) => {
+    if (isUpdatingImages) return;
+
+    // Validate MIME type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
       addToast({
-        type: 'success',
-        title: 'Images updated',
-        message: 'Restaurant images have been updated successfully.',
+        type: 'error',
+        title: 'Unsupported format',
+        message: 'Only JPEG, PNG, and WebP images are allowed.',
       });
-    }, 500);
+      return;
+    }
+
+    // Validate file size (up to 5 MB)
+    const maxSizeBytes = 5 * 1024 * 1024;
+    if (file.size <= 0 || file.size > maxSizeBytes) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      addToast({
+        type: 'error',
+        title: 'File too large',
+        message: `Image size (${sizeMb} MB) must be between 1 byte and 5 MB.`,
+      });
+      return;
+    }
+
+    // Create local preview and stage the file
+    const previewUrl = URL.createObjectURL(file);
+    if (imageType === 'logo') {
+      if (logoPreviewUrl) {
+        URL.revokeObjectURL(logoPreviewUrl);
+      }
+      setSelectedLogoFile(file);
+      setLogoPreviewUrl(previewUrl);
+    } else {
+      if (coverPreviewUrl) {
+        URL.revokeObjectURL(coverPreviewUrl);
+      }
+      setSelectedCoverFile(file);
+      setCoverPreviewUrl(previewUrl);
+    }
   };
 
-  const handleUpdateBasic = async () => {
+  const handleClearSelection = (imageType: 'logo' | 'cover') => {
+    if (isUpdatingImages) return;
+    if (imageType === 'logo') {
+      if (logoPreviewUrl) {
+        URL.revokeObjectURL(logoPreviewUrl);
+        setLogoPreviewUrl(null);
+      }
+      setSelectedLogoFile(null);
+    } else {
+      if (coverPreviewUrl) {
+        URL.revokeObjectURL(coverPreviewUrl);
+        setCoverPreviewUrl(null);
+      }
+      setSelectedCoverFile(null);
+    }
+  };
+
+  const handleUpdateImages = async () => {
+    if (!isImagesDirty || isUpdatingImages) return;
+    setIsUpdatingImages(true);
+
+    const uploadsToPerform: Array<{
+      type: 'logo' | 'cover';
+      file: File;
+      label: string;
+    }> = [];
+
+    if (selectedLogoFile) {
+      uploadsToPerform.push({ type: 'logo', file: selectedLogoFile, label: 'Restaurant logo' });
+    }
+    if (selectedCoverFile) {
+      uploadsToPerform.push({ type: 'cover', file: selectedCoverFile, label: 'Cover photo' });
+    }
+
+    const successes: string[] = [];
+    const errors: string[] = [];
+
+    for (const item of uploadsToPerform) {
+      const isLogo = item.type === 'logo';
+      const setUploading = isLogo ? setLogoUploading : setCoverUploading;
+      const setProgress = isLogo ? setLogoProgress : setCoverProgress;
+
+      setUploading(true);
+      setProgress(0);
+
+      try {
+        // 1. Request presigned upload URL from backend
+        let uploadUrlRes;
+        try {
+          uploadUrlRes = await apiCreateRestaurantImageUploadUrl({
+            image_type: item.type,
+            content_type: item.file.type as 'image/jpeg' | 'image/png' | 'image/webp',
+            file_size_bytes: item.file.size,
+          });
+        } catch (err: any) {
+          throw new Error(err.message || 'Failed to generate S3 upload URL from server');
+        }
+
+        // 2. Direct PUT upload to Amazon S3
+        try {
+          await uploadFileToPresignedUrl(
+            uploadUrlRes.upload_url,
+            item.file,
+            (pct) => setProgress(pct),
+            uploadUrlRes.content_type
+          );
+        } catch (err: any) {
+          throw new Error(`S3 upload failed: ${err.message || 'Storage network error'}`);
+        }
+
+        // 3. Confirm upload with backend
+        let confirmRes;
+        try {
+          confirmRes = await apiConfirmRestaurantImageUpload({
+            object_key: uploadUrlRes.object_key,
+          });
+        } catch (err: any) {
+          throw new Error('Image was uploaded to S3 but could not be saved to your profile.');
+        }
+
+        const finalViewUrl = confirmRes.image_url || confirmRes.view_url || uploadUrlRes.object_key;
+
+        if (isLogo) {
+          if (logoPreviewUrl) {
+            URL.revokeObjectURL(logoPreviewUrl);
+            setLogoPreviewUrl(null);
+          }
+          setSelectedLogoFile(null);
+          setLogoUrl(finalViewUrl);
+        } else {
+          if (coverPreviewUrl) {
+            URL.revokeObjectURL(coverPreviewUrl);
+            setCoverPreviewUrl(null);
+          }
+          setSelectedCoverFile(null);
+          setCoverUrl(finalViewUrl);
+        }
+
+        successes.push(item.label);
+      } catch (err: any) {
+        console.error(`Failed to upload ${item.label}:`, err);
+        errors.push(`${item.label}: ${err?.message || 'Upload failed'}`);
+      } finally {
+        setUploading(false);
+        setProgress(0);
+      }
+    }
+
+    if (successes.length > 0) {
+      if (refetchProfile) {
+        refetchProfile();
+      }
+      addToast({
+        type: 'success',
+        title: successes.length === 1 ? `${successes[0]} updated` : 'Restaurant images updated',
+        message:
+          successes.length === 1
+            ? `${successes[0]} has been uploaded and saved successfully.`
+            : `${successes.join(' and ')} have been saved successfully.`,
+      });
+    }
+
+    if (errors.length > 0) {
+      addToast({
+        type: 'error',
+        title: 'Upload failed',
+        message: errors.join('. '),
+      });
+    }
+
+    setIsUpdatingImages(false);
+  };
+
+    const handleUpdateBasic = async () => {
     if (!isBasicDirty || updatingBasic) return;
     setUpdatingBasic(true);
 
@@ -476,29 +662,42 @@ function ProfileTab({
         <div>
           <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-4">RESTAURANT IMAGES</h3>
           <div className="space-y-3">
-            <MockUploadCard
+            <RestaurantImageUploadCard
               label="Restaurant Logo"
-              uploaded={images.logo}
-              onUpload={() => setImages((prev) => ({ ...prev, logo: !prev.logo }))}
+              imageType="logo"
+              currentImageUrl={logoUrl}
+              selectedFile={selectedLogoFile}
+              previewUrl={logoPreviewUrl}
+              isUploading={logoUploading}
+              uploadProgress={logoProgress}
+              onSelect={(file) => handleSelectImage('logo', file)}
+              onClear={() => handleClearSelection('logo')}
               icon={ImageIcon}
             />
-            <MockUploadCard
+            <RestaurantImageUploadCard
               label="Cover Photo"
-              uploaded={images.cover}
-              onUpload={() => setImages((prev) => ({ ...prev, cover: !prev.cover }))}
+              imageType="cover"
+              currentImageUrl={coverUrl}
+              selectedFile={selectedCoverFile}
+              previewUrl={coverPreviewUrl}
+              isUploading={coverUploading}
+              uploadProgress={coverProgress}
+              onSelect={(file) => handleSelectImage('cover', file)}
+              onClear={() => handleClearSelection('cover')}
               icon={ImageIcon}
             />
           </div>
         </div>
 
-        <div className="flex justify-end pt-3 mt-4 border-t border-gray-100 dark:border-gray-800">
+        <div className="flex items-center justify-between pt-3 mt-4 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-400 dark:text-gray-500">
+          <span>Supported: JPEG, PNG, WebP (max 5 MB)</span>
           <button
             type="button"
-            disabled={!isImagesDirty || updatingImages}
+            disabled={!isImagesDirty || isUpdatingImages}
             onClick={handleUpdateImages}
             className="btn-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5 shadow-sm"
           >
-            {updatingImages ? (
+            {isUpdatingImages ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>Updating...</span>
@@ -2295,7 +2494,174 @@ function PayoutsTab({ onSave }: { onSave: () => void }) {
   );
 }
 
+function RestaurantImageUploadCard({
+  label,
+  imageType: _imageType,
+  currentImageUrl,
+  selectedFile,
+  previewUrl,
+  isUploading,
+  uploadProgress,
+  onSelect,
+  onClear,
+  icon: Icon,
+}: {
+  label: string;
+  imageType: 'logo' | 'cover';
+  currentImageUrl: string | null;
+  selectedFile: File | null;
+  previewUrl: string | null;
+  isUploading: boolean;
+  uploadProgress: number;
+  onSelect: (file: File) => void;
+  onClear?: () => void;
+  icon: typeof ImageIcon;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onSelect(file);
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const displayUrl = previewUrl || currentImageUrl;
+  const hasSelectedFile = Boolean(selectedFile);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => {
+        if (!isUploading) fileInputRef.current?.click();
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !isUploading) {
+          e.preventDefault();
+          fileInputRef.current?.click();
+        }
+      }}
+      className={`w-full p-4 rounded-xl border-2 border-dashed transition-all text-left select-none ${
+        isUploading
+          ? 'border-brand-300 dark:border-brand-500/40 bg-brand-50/20 dark:bg-brand-500/5 cursor-wait'
+          : hasSelectedFile
+          ? 'border-brand-400 dark:border-brand-500/60 bg-brand-50/30 dark:bg-brand-500/10 hover:border-brand-500 cursor-pointer'
+          : currentImageUrl
+          ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-500/5 hover:border-emerald-400 cursor-pointer'
+          : 'border-gray-200 dark:border-gray-700 hover:border-brand-400 hover:bg-brand-50/30 dark:hover:bg-brand-500/5 cursor-pointer'
+      }`}
+    >
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/jpeg,image/png,image/webp"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shrink-0 border ${
+            isUploading
+              ? 'bg-brand-50 dark:bg-brand-500/10 border-brand-200 dark:border-brand-800'
+              : hasSelectedFile
+              ? 'bg-brand-100 dark:bg-brand-500/20 border-brand-300 dark:border-brand-700'
+              : currentImageUrl
+              ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800'
+              : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+          }`}
+        >
+          {isUploading ? (
+            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
+          ) : displayUrl ? (
+            <img
+              src={displayUrl}
+              alt={label}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            <Icon className="w-5 h-5 text-gray-400" />
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p
+            className={`text-sm font-medium truncate ${
+              isUploading
+                ? 'text-brand-700 dark:text-brand-400'
+                : hasSelectedFile
+                ? 'text-brand-700 dark:text-brand-400 font-semibold'
+                : currentImageUrl
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            {label}
+          </p>
+          {isUploading ? (
+            <div className="space-y-1 mt-1">
+              <p className="text-xs text-brand-600 dark:text-brand-400">
+                Uploading to S3... {uploadProgress}%
+              </p>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-brand-500 h-full transition-all duration-200"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : hasSelectedFile ? (
+            <p className="text-xs text-brand-600 dark:text-brand-400 font-medium truncate">
+              {selectedFile?.name ? `Selected: ${selectedFile.name} • Tap Update to save` : 'Selected • Tap Update to save'}
+            </p>
+          ) : (
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              {currentImageUrl ? 'Uploaded successfully • Tap to replace' : 'Tap to upload (JPEG, PNG, WebP up to 5 MB)'}
+            </p>
+          )}
+        </div>
+
+        <div className="shrink-0 flex items-center gap-1.5">
+          {isUploading ? (
+            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
+          ) : hasSelectedFile ? (
+            <>
+              {onClear && (
+                <button
+                  type="button"
+                  title="Discard selection"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClear();
+                  }}
+                  className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                Ready
+              </span>
+            </>
+          ) : currentImageUrl ? (
+            <Check className="w-5 h-5 text-emerald-500" />
+          ) : (
+            <UploadCloud className="w-5 h-5 text-gray-300 dark:text-gray-600" />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MockUploadCard({ label, uploaded, onUpload, icon: Icon }: {
+
   label: string;
   uploaded: boolean;
   onUpload: () => void;

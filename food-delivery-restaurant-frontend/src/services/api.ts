@@ -100,11 +100,51 @@ export interface BusinessDetailsCreateRequest {
   upi_id?: string;
 }
 
+export type RegistrationDocumentType =
+  | 'FSSAI_CERTIFICATE'
+  | 'PAN_CARD'
+  | 'BANK_PROOF'
+  | 'RESTAURANT_PHOTO';
+
+export type RegistrationDocumentContentType =
+  | 'application/pdf'
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp';
+
 export interface RestaurantDocumentCreateRequest {
-  document_type: 'FSSAI_CERTIFICATE' | 'PAN_CARD' | 'BANK_PROOF' | 'RESTAURANT_PHOTO';
+  document_type: RegistrationDocumentType;
   file_url: string;
   file_name?: string;
   mime_type?: string;
+}
+
+export interface RegistrationDocumentUploadUrlRequest {
+  document_type: RegistrationDocumentType;
+  file_name: string;
+  content_type: RegistrationDocumentContentType;
+  file_size_bytes: number;
+}
+
+export interface RegistrationDocumentUploadUrlResponse {
+  upload_url: string;
+  object_key: string;
+  content_type: string;
+  expires_in: number;
+}
+
+export interface RegistrationDocumentConfirmRequest {
+  object_key: string;
+}
+
+export interface RegistrationDocumentConfirmResponse {
+  success: boolean;
+  message: string;
+  document_type: RegistrationDocumentType;
+  file_name: string;
+  object_key: string;
+  content_type: string;
+  file_size_bytes: number;
 }
 
 export interface RegistrationSubmitRequest {
@@ -429,6 +469,38 @@ export async function apiGetRegistrationStatus(): Promise<RegistrationStatusResp
   });
 }
 
+/**
+ * POST /api/v1/restaurants/registration/documents/upload-url
+ * Generates an Amazon S3 presigned PUT URL for a registration verification document.
+ */
+export async function apiCreateRegistrationDocumentUploadUrl(
+  payload: RegistrationDocumentUploadUrlRequest
+): Promise<RegistrationDocumentUploadUrlResponse> {
+  return request<RegistrationDocumentUploadUrlResponse>(
+    '/api/v1/restaurants/registration/documents/upload-url',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/**
+ * POST /api/v1/restaurants/registration/documents/confirm
+ * Confirms that a registration verification document was successfully uploaded to Amazon S3.
+ */
+export async function apiConfirmRegistrationDocumentUpload(
+  payload: RegistrationDocumentConfirmRequest
+): Promise<RegistrationDocumentConfirmResponse> {
+  return request<RegistrationDocumentConfirmResponse>(
+    '/api/v1/restaurants/registration/documents/confirm',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
 export interface CategoryCreateRequest {
   name: string;
 }
@@ -462,11 +534,127 @@ export async function apiGetCategories(): Promise<CategoryResponse[]> {
   });
 }
 
+export type MenuImageContentType = 'image/jpeg' | 'image/png' | 'image/webp';
+
+export interface MenuImageUploadUrlRequest {
+  content_type: MenuImageContentType;
+  file_size_bytes: number;
+}
+
+export interface MenuImageUploadUrlResponse {
+  upload_url: string;
+  object_key: string;
+  content_type: string;
+  expires_in: number;
+}
+
+export interface MenuImageConfirmRequest {
+  object_key: string;
+}
+
+export interface MenuImageConfirmResponse {
+  message?: string;
+  object_key: string;
+  media_type?: string;
+  content_type?: string;
+  file_size_bytes?: number;
+  status: 'CONFIRMED' | string;
+  confirmed_at?: string | null;
+}
+
+/**
+ * POST /api/v1/menu/images/upload-url
+ * Generates an Amazon S3 presigned PUT URL for a menu item image.
+ */
+export async function apiCreateMenuImageUploadUrl(
+  payload: MenuImageUploadUrlRequest
+): Promise<MenuImageUploadUrlResponse> {
+  return request<MenuImageUploadUrlResponse>('/api/v1/menu/images/upload-url', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * POST /api/v1/menu/images/confirm
+ * Confirms that the media upload was uploaded to S3 and verified by backend.
+ */
+export async function apiConfirmMenuImageUpload(
+  payload: MenuImageConfirmRequest
+): Promise<MenuImageConfirmResponse> {
+  return request<MenuImageConfirmResponse>('/api/v1/menu/images/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ object_key: payload.object_key }),
+  });
+}
+
+/**
+ * Direct HTTP PUT upload to Amazon S3 presigned URL.
+ * Does NOT attach Authorization headers or session cookies (which would cause S3 signature errors).
+ */
+export async function uploadFileToPresignedUrl(
+  uploadUrl: string,
+  file: File,
+  onProgress?: (progressPercent: number) => void,
+  contentType?: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    // Content-Type must strictly match the value used when generating the presigned URL in s3_service.py
+    xhr.setRequestHeader('Content-Type', contentType || file.type);
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          onProgress(percent);
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        console.error("S3 upload error:", {
+          status: xhr.status,
+          response: xhr.responseText,
+          contentType: contentType || file.type,
+        });
+
+        reject(
+          new Error(
+            `S3 upload failed (${xhr.status}): ${
+              xhr.responseText || xhr.statusText
+            }`
+          )
+        );
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(
+        new Error(
+          'Network error uploading image to Amazon S3. Please verify network connectivity and S3 bucket CORS configuration.'
+        )
+      );
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error('S3 image upload timed out. Please try again with a smaller file or faster connection.'));
+    };
+
+    xhr.send(file);
+  });
+}
+
 export interface MenuItemCreateRequest {
   category_id?: string;
   category_name?: string;
   name: string;
   description?: string | null;
+  image_key?: string | null;
   image_url?: string | null;
   base_price: number;
   food_type: 'VEG' | 'NON_VEG' | 'EGG';
@@ -1051,6 +1239,59 @@ export async function apiUpdateRestaurantProfile(
     body: JSON.stringify(payload),
   });
 }
+
+export interface RestaurantImageUploadUrlRequest {
+  image_type: 'logo' | 'cover';
+  content_type: 'image/jpeg' | 'image/png' | 'image/webp';
+  file_size_bytes: number;
+}
+
+export interface RestaurantImageUploadUrlResponse {
+  upload_url: string;
+  object_key: string;
+  content_type: string;
+  expires_in: number;
+}
+
+export interface RestaurantImageConfirmRequest {
+  object_key: string;
+}
+
+export interface RestaurantImageConfirmResponse {
+  success?: boolean;
+  message?: string;
+  image_type?: string;
+  object_key: string;
+  image_url: string;
+  view_url?: string;
+}
+
+/**
+ * POST /api/v1/restaurants/me/profile/images/upload-url
+ * Generates an Amazon S3 presigned PUT URL for a restaurant logo or cover image.
+ */
+export async function apiCreateRestaurantImageUploadUrl(
+  payload: RestaurantImageUploadUrlRequest
+): Promise<RestaurantImageUploadUrlResponse> {
+  return request<RestaurantImageUploadUrlResponse>('/api/v1/restaurants/me/profile/images/upload-url', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * POST /api/v1/restaurants/me/profile/images/confirm
+ * Confirms that the restaurant logo/cover was uploaded to S3 and verified by backend.
+ */
+export async function apiConfirmRestaurantImageUpload(
+  payload: RestaurantImageConfirmRequest
+): Promise<RestaurantImageConfirmResponse> {
+  return request<RestaurantImageConfirmResponse>('/api/v1/restaurants/me/profile/images/confirm', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 
 export interface RestaurantAddressResponse {
   address_line1?: string;

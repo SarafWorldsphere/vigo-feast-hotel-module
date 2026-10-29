@@ -13,6 +13,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import synonym
 
 from app.db.database import Base
 
@@ -54,10 +55,11 @@ class MenuItem(Base):
         nullable=True,
     )
 
-    image_url = Column(
+    image_key = Column(
         Text,
         nullable=True,
     )
+    image_url = synonym("image_key")
 
     base_price = Column(
         Numeric(10, 2),
