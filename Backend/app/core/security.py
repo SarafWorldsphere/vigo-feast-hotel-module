@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -102,21 +103,26 @@ def generate_refresh_token() -> str:
 
 
 def hash_refresh_token(token: str) -> str:
-    token_digest = hashlib.sha256(token.encode("utf-8")).digest()
-
-    return bcrypt.hashpw(
-        token_digest,
-        bcrypt.gensalt()
-    ).decode("utf-8")
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def verify_refresh_token(token: str, token_hash: str) -> bool:
-    token_digest = hashlib.sha256(token.encode("utf-8")).digest()
+    computed = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if hmac.compare_digest(computed, token_hash):
+        return True
 
-    return bcrypt.checkpw(
-        token_digest,
-        token_hash.encode("utf-8")
-    )
+    # Backward compatibility for legacy bcrypt hashes
+    if token_hash.startswith("$2b$") or token_hash.startswith("$2a$"):
+        try:
+            token_digest = hashlib.sha256(token.encode("utf-8")).digest()
+            return bcrypt.checkpw(
+                token_digest,
+                token_hash.encode("utf-8")
+            )
+        except Exception:
+            return False
+
+    return False
 
 
 def get_current_owner(

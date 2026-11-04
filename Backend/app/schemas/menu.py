@@ -3,6 +3,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 from decimal import Decimal
 from typing import Literal
+
+
 class CategoryCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
@@ -26,6 +28,11 @@ class CategoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class CategoryAvailabilityUpdateRequest(BaseModel):
+    is_active: bool
+
+
 class MenuItemCreateRequest(BaseModel):
     category_id: UUID | None = None
     category_name: str | None = None
@@ -35,6 +42,7 @@ class MenuItemCreateRequest(BaseModel):
     base_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     food_type: Literal["VEG", "NON_VEG", "EGG"] = "VEG"
     preparation_time_minutes: int = Field(default=10, ge=0)
+
     @field_validator("name", mode="before")
     @classmethod
     def validate_name(cls, v):
@@ -88,6 +96,7 @@ class MenuItemResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class MenuItemAvailabilityUpdateRequest(BaseModel):
     availability_status: Literal[

@@ -55,26 +55,39 @@ export function MenuPage() {
 
   const availabilityConfig: Record<ItemAvailability, { label: string; bg: string; text: string }> = {
     AVAILABLE: { label: 'Available', bg: 'bg-emerald-50 dark:bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400' },
-    OUT_OF_STOCK: { label: 'Out of Stock', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400' },
-    TEMP_UNAVAILABLE: { label: 'Temp Unavailable', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400' },
+    OUT_OF_STOCK: { label: 'Not Available', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400' },
+    TEMP_UNAVAILABLE: { label: 'Not Available', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400' },
   };
 
-  const cycleAvailability = async (item: MenuItem) => {
-    const cycle: ItemAvailability[] = ['AVAILABLE', 'TEMP_UNAVAILABLE', 'OUT_OF_STOCK'];
-    const nextIndex = (cycle.indexOf(item.availability) + 1) % cycle.length;
-    const next = cycle[nextIndex];
+  const toggleAvailability = async (item: MenuItem) => {
+    if (updatingAvailabilityId === item.id) return;
+
+    // Toggle between AVAILABLE and TEMP_UNAVAILABLE (Not Available)
+    const next: ItemAvailability = item.availability === 'AVAILABLE' ? 'TEMP_UNAVAILABLE' : 'AVAILABLE';
     const previous = item.availability;
+
+    setUpdatingAvailabilityId(item.id);
 
     // Instant optimistic UI update (0ms perceived delay)
     updateMenuItem(item.id, { availability: next });
-    addToast({ type: next === 'AVAILABLE' ? 'success' : 'info', title: availabilityConfig[next].label, message: item.name });
+    addToast({
+      type: next === 'AVAILABLE' ? 'success' : 'info',
+      title: next === 'AVAILABLE' ? 'Item is now Available' : 'Item marked Not Available',
+      message: item.name,
+    });
 
     try {
       await updateMenuItemAvailability(item.id, next);
     } catch (error) {
-      // Roll back to previous state if the request fails
+      // Roll back to previous state if the network request fails
       updateMenuItem(item.id, { availability: previous });
-      addToast({ type: 'error', title: 'Availability update failed', message: error instanceof Error ? error.message : 'Please try again' });
+      addToast({
+        type: 'error',
+        title: 'Availability update failed',
+        message: error instanceof Error ? error.message : 'Please try again',
+      });
+    } finally {
+      setUpdatingAvailabilityId(null);
     }
   };
 
@@ -217,14 +230,26 @@ export function MenuPage() {
             return (
               <div
                 key={item.id}
-                className="card overflow-hidden hover:shadow-elevated transition-all duration-200 hover:-translate-y-0.5 animate-slide-up group"
+                onClick={() => toggleAvailability(item)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleAvailability(item);
+                  }
+                }}
+                className="card overflow-hidden hover:shadow-elevated transition-all duration-200 hover:-translate-y-0.5 animate-slide-up group cursor-pointer select-none"
                 style={{ animationDelay: `${i * 30}ms` }}
               >
               <div className="relative h-32 overflow-hidden">
                 <FoodImage image={item.image_url || item.image} name={item.name} className="w-full h-full" />
                 <div className="absolute top-2 right-2">
                   <button
-                    onClick={() => cycleAvailability(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleAvailability(item);
+                    }}
                     disabled={updatingAvailabilityId === item.id}
                     className={`badge ${avail.bg} ${avail.text} backdrop-blur-sm shadow-sm transition-all hover:scale-105 disabled:opacity-60 disabled:cursor-wait`}
                   >
@@ -240,8 +265,12 @@ export function MenuPage() {
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{item.name}</h4>
                   <button
-                    onClick={() => setEditingItem(item)}
-                    className="text-gray-400 hover:text-brand-500 transition-colors shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingItem(item);
+                    }}
+                    className="text-gray-400 hover:text-brand-500 transition-colors shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                    title="Edit dish"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>

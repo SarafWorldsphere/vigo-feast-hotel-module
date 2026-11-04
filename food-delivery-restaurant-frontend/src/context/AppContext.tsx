@@ -827,11 +827,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Step 3: Logout attached to POST /api/v1/auth/logout
   const logout = useCallback(async () => {
-    try {
-      await apiLogout();
-    } catch {
-      // ignore
-    }
+    // Optimistic UI clear - immediately return to login view
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('nfd_dashboard_entered');
       sessionStorage.removeItem('nfd_access_token');
@@ -846,6 +842,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       title: 'Logged out',
       message: 'You have been safely signed out.',
     });
+
+    // Fire backend session revocation
+    try {
+      await apiLogout();
+    } catch {
+      // ignore
+    }
   }, [addToast]);
 
   // Step 4: Submit Registration Wizard attached to POST /api/v1/restaurants/registration/submit
@@ -1027,15 +1030,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateMenuItemAvailability = useCallback(async (id: string, availability: ItemAvailability): Promise<MenuItem> => {
     const response = await apiUpdateMenuItemAvailability(id, availability as MenuItemAvailability);
-    let updatedItem: MenuItem | undefined;
-    setMenuItems((prev) => prev.map((item) => {
-      if (item.id !== id) return item;
-      updatedItem = { ...item, availability: (response.availability_status as ItemAvailability) || availability };
-      return updatedItem;
-    }));
-    if (!updatedItem) throw new Error('Menu item not found');
-    return updatedItem;
-  }, []);
+    const resolvedAvailability = (response.availability_status as ItemAvailability) || availability;
+    setMenuItems((prev) => prev.map((item) => (item.id === id ? { ...item, availability: resolvedAvailability } : item)));
+
+    const existing = menuItems.find((m) => m.id === id);
+    if (existing) {
+      return { ...existing, availability: resolvedAvailability };
+    }
+    return {
+      id,
+      name: response.name,
+      description: response.description || '',
+      price: Number(response.base_price),
+      category: '',
+      prepTime: response.preparation_time_minutes,
+      availability: resolvedAvailability,
+      image: response.image_url || 'placeholder',
+      rating: 5.0,
+      totalOrders: 0,
+      foodType: 'VEG',
+    };
+  }, [menuItems]);
 
   const reorderCategories = useCallback((newOrder: Category[]) => {
     setCategories(newOrder);

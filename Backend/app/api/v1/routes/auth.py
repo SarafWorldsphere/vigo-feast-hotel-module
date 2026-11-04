@@ -287,21 +287,31 @@ def refresh_access_token(
             detail="Refresh token is missing",
         )
 
-    sessions = (
+    # 1. Fast indexed lookup by SHA-256 hash (O(1))
+    token_hash = hash_refresh_token(refresh_token)
+    session = (
         db.query(RestaurantOwnerSession)
-        .filter(RestaurantOwnerSession.revoked_at.is_(None))
-        .all()
+        .filter(
+            RestaurantOwnerSession.refresh_token_hash == token_hash,
+            RestaurantOwnerSession.revoked_at.is_(None),
+        )
+        .first()
     )
 
-    session = None
-
-    for item in sessions:
-        if verify_refresh_token(
-            refresh_token,
-            item.refresh_token_hash,
-        ):
-            session = item
-            break
+    # 2. Fallback for legacy unrevoked bcrypt-hashed sessions (if any)
+    if not session:
+        legacy_sessions = (
+            db.query(RestaurantOwnerSession)
+            .filter(
+                RestaurantOwnerSession.revoked_at.is_(None),
+                RestaurantOwnerSession.refresh_token_hash.startswith("$2"),
+            )
+            .all()
+        )
+        for item in legacy_sessions:
+            if verify_refresh_token(refresh_token, item.refresh_token_hash):
+                session = item
+                break
 
     if not session:
         raise HTTPException(
@@ -374,24 +384,31 @@ def logout(
             "message": "Logged out successfully",
         }
 
-    # Find the active session belonging to this refresh token.
-    sessions = (
+    # 1. Fast indexed lookup by SHA-256 hash (O(1))
+    token_hash = hash_refresh_token(refresh_token)
+    session = (
         db.query(RestaurantOwnerSession)
         .filter(
-            RestaurantOwnerSession.revoked_at.is_(None)
+            RestaurantOwnerSession.refresh_token_hash == token_hash,
+            RestaurantOwnerSession.revoked_at.is_(None),
         )
-        .all()
+        .first()
     )
 
-    session = None
-
-    for item in sessions:
-        if verify_refresh_token(
-            refresh_token,
-            item.refresh_token_hash,
-        ):
-            session = item
-            break
+    # 2. Fallback for legacy unrevoked bcrypt-hashed sessions (if any)
+    if not session:
+        legacy_sessions = (
+            db.query(RestaurantOwnerSession)
+            .filter(
+                RestaurantOwnerSession.revoked_at.is_(None),
+                RestaurantOwnerSession.refresh_token_hash.startswith("$2"),
+            )
+            .all()
+        )
+        for item in legacy_sessions:
+            if verify_refresh_token(refresh_token, item.refresh_token_hash):
+                session = item
+                break
 
     # Revoke the matching refresh-token session.
     if session:

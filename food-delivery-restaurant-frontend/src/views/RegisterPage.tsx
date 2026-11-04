@@ -1039,6 +1039,11 @@ export function RegisterPage() {
             Login
           </button>
         </p>
+
+        {/* Powered by footer */}
+        <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-6 pb-4 tracking-wide">
+          Powered by Saraf Worldsphere AI services
+        </p>
       </div>
     </div>
   );
