@@ -1,6 +1,24 @@
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
+
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _get_today_range():
+    """
+    Returns (start_of_today, start_of_tomorrow) in IST timezone.
+    """
+    now_ist = datetime.now(IST)
+    today_start = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
+    return today_start, tomorrow_start
 
 from app.core.security import get_current_owner
 from app.db.database import get_db
@@ -25,6 +43,7 @@ from app.schemas.order import (
     OrderResponse,
 )
 from app.services.order import create_customer_order
+from app.services.restaurant_hours import get_restaurant_availability
 
 router = APIRouter()
 
@@ -244,15 +263,78 @@ def get_restaurant_orders(
     if not restaurant:
         return OrderListResponse(orders=[], total=0)
 
-    orders = (
-        db.query(Order)
-        .filter(
-            Order.restaurant_id == restaurant.id,
-            Order.is_deleted.is_(False),
-        )
-        .order_by(Order.created_at.desc())
-        .all()
+    avail = get_restaurant_availability(db, restaurant.id)
+    today_start, tomorrow_start = _get_today_range()
+
+    active_statuses = [
+        "ORDERED",
+        "PLACED",
+        "ACCEPTED",
+        "PREPARING",
+        "READY_FOR_PICKUP",
+        "PICKED_UP",
+    ]
+    terminal_statuses = [
+        "DELIVERED",
+        "COMPLETED",
+        "REJECTED",
+        "CANCELLED",
+        "FAILED",
+        "REFUNDED",
+    ]
+
+    # Completed, rejected, and cancelled orders must belong to today's date
+    terminal_today_filter = and_(
+        Order.order_status.in_(terminal_statuses),
+        or_(
+            and_(
+                Order.updated_at >= today_start,
+                Order.updated_at < tomorrow_start,
+                Order.created_at >= today_start - timedelta(hours=24),
+            ),
+            and_(
+                Order.created_at >= today_start,
+                Order.created_at < tomorrow_start,
+            ),
+            and_(
+                Order.last_updated_date == today_start.date(),
+                Order.created_at >= today_start - timedelta(hours=24),
+            ),
+        ),
     )
+
+    if avail["status"] == "OFFLINE":
+        # When restaurant is offline (not open today), there are no orders in the active lifecycle.
+        # Only return today's completed, rejected, and cancelled orders.
+        orders = (
+            db.query(Order)
+            .filter(
+                Order.restaurant_id == restaurant.id,
+                Order.is_deleted.is_(False),
+                terminal_today_filter,
+            )
+            .order_by(Order.created_at.desc())
+            .all()
+        )
+    else:
+        # ONLINE or PAUSED:
+        # 1. Active lifecycle orders created on current day
+        # 2. Terminal orders completed/rejected/cancelled on current day
+        active_today_filter = and_(
+            Order.order_status.in_(active_statuses),
+            Order.created_at >= today_start,
+            Order.created_at < tomorrow_start,
+        )
+        orders = (
+            db.query(Order)
+            .filter(
+                Order.restaurant_id == restaurant.id,
+                Order.is_deleted.is_(False),
+                or_(active_today_filter, terminal_today_filter),
+            )
+            .order_by(Order.created_at.desc())
+            .all()
+        )
 
     response_orders = []
 
@@ -394,6 +476,19 @@ def accept_order(
             detail="Restaurant not found",
         )
 
+    avail = get_restaurant_availability(db, restaurant.id)
+    if avail["status"] == "OFFLINE":
+        raise HTTPException(
+            status_code=409,
+            detail="Restaurant is currently offline and cannot accept orders",
+        )
+
+    if avail["status"] == "PAUSED":
+        raise HTTPException(
+            status_code=409,
+            detail="Restaurant ordering is currently paused. Please resume orders to accept new orders.",
+        )
+
     order = (
         db.query(Order)
         .filter(
@@ -410,6 +505,13 @@ def accept_order(
             detail="Order not found",
         )
 
+    today_start, tomorrow_start = _get_today_range()
+    if order.created_at < today_start or order.created_at >= tomorrow_start:
+        raise HTTPException(
+            status_code=400,
+            detail="Only orders placed on the current day can be accepted.",
+        )
+
     if order.order_status == "ACCEPTED":
         return get_restaurant_order(
             order_id=order_id,
@@ -423,7 +525,11 @@ def accept_order(
             detail=f"Order cannot be accepted from status {order.order_status}",
         )
 
+    now = datetime.now(timezone.utc)
     order.order_status = "ACCEPTED"
+    order.updated_at = now
+    order.last_updated_date = today_start.date()
+    order.last_updated_time = now.time()
 
     db.commit()
     db.refresh(order)
@@ -453,6 +559,13 @@ def reject_order(
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
+    avail = get_restaurant_availability(db, restaurant.id)
+    if avail["status"] == "OFFLINE":
+        raise HTTPException(
+            status_code=409,
+            detail="Restaurant is currently offline and cannot process orders",
+        )
+
     order = (
         db.query(Order)
         .filter(
@@ -466,13 +579,24 @@ def reject_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    today_start, tomorrow_start = _get_today_range()
+    if order.created_at < today_start or order.created_at >= tomorrow_start:
+        raise HTTPException(
+            status_code=400,
+            detail="Only orders placed on the current day can be rejected.",
+        )
+
     if order.order_status != "ORDERED":
         raise HTTPException(
             status_code=400,
             detail=f"Order cannot be rejected from status {order.order_status}",
         )
 
+    now = datetime.now(timezone.utc)
     order.order_status = "REJECTED"
+    order.updated_at = now
+    order.last_updated_date = today_start.date()
+    order.last_updated_time = now.time()
 
     db.commit()
     db.refresh(order)
@@ -498,6 +622,13 @@ def mark_order_preparing(
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
+    avail = get_restaurant_availability(db, restaurant.id)
+    if avail["status"] == "OFFLINE":
+        raise HTTPException(
+            status_code=409,
+            detail="Restaurant is currently offline and cannot process orders",
+        )
+
     order = (
         db.query(Order)
         .filter(
@@ -511,6 +642,13 @@ def mark_order_preparing(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    today_start, tomorrow_start = _get_today_range()
+    if order.created_at < today_start or order.created_at >= tomorrow_start:
+        raise HTTPException(
+            status_code=400,
+            detail="Only orders placed on the current day can be prepared.",
+        )
+
     if order.order_status == "PREPARING":
         return get_restaurant_order(order_id, db, owner)
 
@@ -520,7 +658,11 @@ def mark_order_preparing(
             detail=f"Order cannot be marked preparing from status {order.order_status}",
         )
 
+    now = datetime.now(timezone.utc)
     order.order_status = "PREPARING"
+    order.updated_at = now
+    order.last_updated_date = today_start.date()
+    order.last_updated_time = now.time()
 
     db.commit()
     db.refresh(order)
@@ -546,6 +688,13 @@ def mark_order_ready(
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
+    avail = get_restaurant_availability(db, restaurant.id)
+    if avail["status"] == "OFFLINE":
+        raise HTTPException(
+            status_code=409,
+            detail="Restaurant is currently offline and cannot process orders",
+        )
+
     order = (
         db.query(Order)
         .filter(
@@ -559,6 +708,13 @@ def mark_order_ready(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    today_start, tomorrow_start = _get_today_range()
+    if order.created_at < today_start or order.created_at >= tomorrow_start:
+        raise HTTPException(
+            status_code=400,
+            detail="Only orders placed on the current day can be marked ready.",
+        )
+
     if order.order_status == "READY_FOR_PICKUP":
         return get_restaurant_order(order_id, db, owner)
 
@@ -568,7 +724,11 @@ def mark_order_ready(
             detail=f"Order cannot be marked ready from status {order.order_status}",
         )
 
+    now = datetime.now(timezone.utc)
     order.order_status = "READY_FOR_PICKUP"
+    order.updated_at = now
+    order.last_updated_date = today_start.date()
+    order.last_updated_time = now.time()
 
     db.commit()
     db.refresh(order)
@@ -593,15 +753,73 @@ def get_restaurant_deliveries(
     if not restaurant:
         return DeliveryListResponse(deliveries=[], total=0)
 
-    orders = (
-        db.query(Order)
-        .filter(
-            Order.restaurant_id == restaurant.id,
-            Order.is_deleted.is_(False),
-        )
-        .order_by(Order.created_at.desc())
-        .all()
+    avail = get_restaurant_availability(db, restaurant.id)
+    today_start, tomorrow_start = _get_today_range()
+
+    active_statuses = [
+        "ORDERED",
+        "PLACED",
+        "ACCEPTED",
+        "PREPARING",
+        "READY_FOR_PICKUP",
+        "PICKED_UP",
+    ]
+    terminal_statuses = [
+        "DELIVERED",
+        "COMPLETED",
+        "REJECTED",
+        "CANCELLED",
+        "FAILED",
+        "REFUNDED",
+    ]
+
+    terminal_today_filter = and_(
+        Order.order_status.in_(terminal_statuses),
+        or_(
+            and_(
+                Order.updated_at >= today_start,
+                Order.updated_at < tomorrow_start,
+                Order.created_at >= today_start - timedelta(hours=24),
+            ),
+            and_(
+                Order.created_at >= today_start,
+                Order.created_at < tomorrow_start,
+            ),
+            and_(
+                Order.last_updated_date == today_start.date(),
+                Order.created_at >= today_start - timedelta(hours=24),
+            ),
+        ),
     )
+
+    if avail["status"] == "OFFLINE":
+        # When restaurant is offline, no active deliveries exist in lifecycle
+        orders = (
+            db.query(Order)
+            .filter(
+                Order.restaurant_id == restaurant.id,
+                Order.is_deleted.is_(False),
+                terminal_today_filter,
+            )
+            .order_by(Order.created_at.desc())
+            .all()
+        )
+    else:
+        active_today_filter = and_(
+            Order.order_status.in_(active_statuses),
+            Order.created_at >= today_start,
+            Order.created_at < tomorrow_start,
+        )
+        orders = (
+            db.query(Order)
+            .filter(
+                Order.restaurant_id == restaurant.id,
+                Order.is_deleted.is_(False),
+                or_(active_today_filter, terminal_today_filter),
+            )
+            .order_by(Order.created_at.desc())
+            .all()
+        )
 
     deliveries = [_build_delivery_response(order, db) for order in orders]
     return DeliveryListResponse(deliveries=deliveries, total=len(deliveries))

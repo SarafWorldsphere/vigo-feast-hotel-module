@@ -45,16 +45,15 @@ function getOfferStatus(offer: Offer): OfferStatus {
 }
 
 export function OffersPage() {
-  const { categories, menuItems, addToast } = useApp();
+  const { categories, menuItems, addToast, offers, setOffers, loadOffers: refreshSharedOffers } = useApp();
   const { createOffer, isCreating } = useCreateOffer();
   const { updateOffer, isUpdating } = useUpdateOffer();
   const { toggleOffer, isToggling, togglingId } = useToggleOffer();
   const { deleteOffer, isDeleting, deletingId } = useDeleteOffer();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('active');
-  const [offers, setOffers] = useState<Offer[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
 
@@ -477,13 +476,31 @@ function OfferEditorModal({
   const [name, setName] = useState(offer?.name ?? '');
   const [offerCode, setOfferCode] = useState(offer?.offerCode ?? '');
   const [offerType, setOfferType] = useState<OfferType>(offer?.offerType ?? 'PERCENTAGE');
-  const [discountValue, setDiscountValue] = useState(offer?.discountValue ?? 10);
-  const [maxDiscount, setMaxDiscount] = useState(offer?.maxDiscountAmount ?? 0);
-  const [minOrder, setMinOrder] = useState(offer?.minimumOrderAmount ?? 0);
+  const [discountValue, setDiscountValue] = useState<string>(
+    offer?.discountValue !== undefined ? String(offer.discountValue) : '10'
+  );
+  const [maxDiscount, setMaxDiscount] = useState<string>(
+    offer?.maxDiscountAmount ? String(offer.maxDiscountAmount) : ''
+  );
+  const [minOrder, setMinOrder] = useState<string>(
+    offer?.minimumOrderAmount ? String(offer.minimumOrderAmount) : ''
+  );
   const [startAt, setStartAt] = useState(offer?.startAt ? offer.startAt.slice(0, 16) : '2026-10-01T00:00');
   const [endAt, setEndAt] = useState(offer?.endAt ? offer.endAt.slice(0, 16) : '2026-10-31T23:59');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(offer?.applicableCategories ?? []);
   const [selectedItems, setSelectedItems] = useState<string[]>(offer?.applicableItems ?? []);
+
+  const handleNumericInput = (val: string, setter: (v: string) => void) => {
+    if (val === '') {
+      setter('');
+      return;
+    }
+    if (/^\d*\.?\d*$/.test(val)) {
+      // Automatically remove leading zero before digits (e.g. "099" -> "99"), while keeping "0" or "0.xx"
+      const cleaned = val.replace(/^0+(?=\d)/, '');
+      setter(cleaned);
+    }
+  };
 
   const offerTypes: { value: OfferType; label: string }[] = [
     { value: 'PERCENTAGE', label: 'Percentage' },
@@ -514,9 +531,9 @@ function OfferEditorModal({
       name: name.trim(),
       offerCode: offerCode.trim() ? offerCode.trim().toUpperCase() : undefined,
       offerType,
-      discountValue,
-      maxDiscountAmount: maxDiscount,
-      minimumOrderAmount: minOrder,
+      discountValue: parseFloat(discountValue) || 0,
+      maxDiscountAmount: parseFloat(maxDiscount) || 0,
+      minimumOrderAmount: parseFloat(minOrder) || 0,
       startAt: new Date(startAt).toISOString(),
       endAt: new Date(endAt).toISOString(),
       isActive: true,
@@ -575,17 +592,38 @@ function OfferEditorModal({
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {offerType === 'PERCENTAGE' ? 'Discount (%)' : 'Discount (₹)'}
               </label>
-              <input type="number" className="input mt-1" value={discountValue} onChange={(e) => setDiscountValue(Number(e.target.value))} />
+              <input
+                type="text"
+                inputMode="decimal"
+                className="input mt-1"
+                placeholder="10"
+                value={discountValue}
+                onChange={(e) => handleNumericInput(e.target.value, setDiscountValue)}
+              />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Max Discount Cap (₹)</label>
-              <input type="number" className="input mt-1" value={maxDiscount} onChange={(e) => setMaxDiscount(Number(e.target.value))} />
+              <input
+                type="text"
+                inputMode="decimal"
+                className="input mt-1"
+                placeholder="0"
+                value={maxDiscount}
+                onChange={(e) => handleNumericInput(e.target.value, setMaxDiscount)}
+              />
             </div>
           </div>
 
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Minimum Order Amount (₹)</label>
-            <input type="number" className="input mt-1" value={minOrder} onChange={(e) => setMinOrder(Number(e.target.value))} />
+            <input
+              type="text"
+              inputMode="decimal"
+              className="input mt-1"
+              placeholder="0"
+              value={minOrder}
+              onChange={(e) => handleNumericInput(e.target.value, setMinOrder)}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

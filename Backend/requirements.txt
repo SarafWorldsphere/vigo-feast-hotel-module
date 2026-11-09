@@ -9,3 +9,5 @@ pydantic[email]
 httpx
 boto3
 tzdata
+razorpay
+requests

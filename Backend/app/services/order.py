@@ -1,6 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
+
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = timezone(timedelta(hours=5, minutes=30))
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -38,15 +44,16 @@ def create_customer_order(
             detail="Restaurant not found",
         )
 
-    # Authoritative availability check
+    # Authoritative availability check: orders can ONLY be received when the restaurant is ONLINE
     availability = get_restaurant_availability(
         db, payload.restaurant_id, as_of=as_of
     )
-    if not availability["is_accepting_orders"]:
+    if not availability["is_accepting_orders"] or availability.get("status") != "ONLINE":
+        status_name = availability.get("status", "OFFLINE")
         reason = availability.get("reason", "OUTSIDE_ORDERING_HOURS")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Restaurant is currently not accepting orders: {reason}",
+            detail=f"Restaurant is currently not accepting orders ({status_name}): {reason}",
         )
 
     # Compute items and financial amounts
@@ -81,6 +88,9 @@ def create_customer_order(
         subtotal_val + gst_amount_val + delivery_charge_val - discount_amount_val
     )
 
+    now_utc = datetime.now(timezone.utc)
+    today_ist = datetime.now(IST).date()
+
     new_order = Order(
         customer_id=payload.customer_id,
         restaurant_id=payload.restaurant_id,
@@ -91,6 +101,9 @@ def create_customer_order(
         discount_amount=discount_amount_val,
         total_amount=total_amount_val,
         delivery_eta=payload.delivery_eta,
+        created_at=now_utc,
+        updated_at=now_utc,
+        added_date=today_ist,
     )
     db.add(new_order)
     db.flush()

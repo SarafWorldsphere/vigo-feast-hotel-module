@@ -17,6 +17,7 @@ from app.api.v1.routes.settlement import router as settlement_router
 from app.api.v1.routes.analytics import router as analytics_router
 from app.api.v1.routes.complaints import router as complaints_router
 from app.api.v1.routes.refunds import router as refunds_router
+from app.api.v1.routes.razorpay_webhooks import router as razorpay_webhooks_router
 from app.api.v1.routes.notifications import router as notifications_router
 from app.api.v1.routes import restaurant_hours
 import asyncio
@@ -151,6 +152,7 @@ app.include_router(
 )
 
 app.include_router(refunds_router)
+app.include_router(razorpay_webhooks_router)
 
 app.include_router(
     restaurant_hours.router,

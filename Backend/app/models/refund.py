@@ -39,6 +39,13 @@ class Refund(Base):
         index=True,
     )
 
+    payment_id = Column(
+        BigInteger,
+        ForeignKey("vgf_payments.payment_id"),
+        nullable=True,
+        index=True,
+    )
+
     complaint_id = Column(
         BigInteger,
         ForeignKey("vgf_complaints.complaint_id"),
@@ -93,6 +100,8 @@ class Refund(Base):
     )
 
     order = relationship("Order", back_populates="refunds")
+
+    payment = relationship("Payment")
 
     complaint = relationship("Complaint")
 

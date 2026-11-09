@@ -58,7 +58,10 @@ def verify_password(
     )
 
 
-def create_access_token(owner_id: str) -> str:
+def create_access_token(
+    owner_id: str,
+    token_version: int = 0
+) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=ACCESS_TOKEN_EXPIRE_MINUTES
     )
@@ -66,6 +69,7 @@ def create_access_token(owner_id: str) -> str:
     payload = {
         "sub": owner_id,
         "type": "access",
+        "ver": token_version,
         "exp": expire,
     }
 
@@ -74,6 +78,30 @@ def create_access_token(owner_id: str) -> str:
         SECRET_KEY,
         algorithm=ALGORITHM,
     )
+
+
+def decode_access_token_payload(token: str) -> dict:
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+
+        if payload.get("type") != "access":
+            raise ValueError("Invalid token type")
+
+        if not payload.get("sub"):
+            raise ValueError("Invalid token subject")
+
+        # Existing tokens without "ver" are treated as version 0.
+        if not isinstance(payload.get("ver", 0), int):
+            raise ValueError("Invalid token version")
+
+        return payload
+
+    except JWTError:
+        raise ValueError("Invalid or expired access token")
 
 
 def decode_access_token(token: str) -> str:
@@ -96,6 +124,34 @@ def decode_access_token(token: str) -> str:
 
     except JWTError:
         raise ValueError("Invalid or expired access token")
+
+
+def create_password_reset_token(owner_id: str, phone: str, expires_seconds: int = 600) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(seconds=expires_seconds)
+    payload = {
+        "sub": owner_id,
+        "phone": phone,
+        "type": "password_reset",
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_password_reset_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+        if payload.get("type") != "password_reset":
+            raise ValueError("Invalid token type")
+        owner_id = payload.get("sub")
+        if not owner_id:
+            raise ValueError("Invalid token subject")
+        return payload
+    except JWTError:
+        raise ValueError("Invalid or expired reset token")
 
 
 def generate_refresh_token() -> str:
@@ -131,7 +187,8 @@ def get_current_owner(
     db: Session = Depends(get_db),
 ):
     token = access_token
-    if not token and authorization and isinstance(authorization, str):
+
+    if not token and authorization:
         if authorization.startswith("Bearer "):
             token = authorization[7:].strip()
         else:
@@ -144,7 +201,10 @@ def get_current_owner(
         )
 
     try:
-        owner_id = decode_access_token(token)
+        payload = decode_access_token_payload(token)
+        owner_id = payload["sub"]
+        token_version = payload.get("ver", 0)
+
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -156,6 +216,7 @@ def get_current_owner(
         .filter(
             RestaurantOwner.id == owner_id,
             RestaurantOwner.is_active.is_(True),
+            RestaurantOwner.is_deleted.is_(False),
         )
         .first()
     )
@@ -164,6 +225,12 @@ def get_current_owner(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Owner account not found or inactive",
+        )
+
+    if owner.token_version != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please login again.",
         )
 
     return owner

@@ -149,13 +149,27 @@ export function RefundModal() {
     return calculateItemEligibleAmount(selectedItems, selectedOrder);
   }, [selectedItems, selectedOrder]);
 
+  // The API is authoritative, but keeping the reserved gateway amounts in the
+  // modal prevents an owner from accidentally submitting an obvious over-refund.
+  const remainingRefundableAmount = useMemo(() => {
+    if (!selectedOrder) return 0;
+    const orderId = String(selectedOrder.id).replace(/^#/, '').replace(/^ORD-/, '');
+    const reserved = refunds
+      .filter((refund) => {
+        const refundOrder = String(refund.order_id || '').replace(/^#/, '').replace(/^ORD-/, '');
+        return refundOrder === orderId && ['PENDING', 'PROCESSING', 'COMPLETED'].includes(refund.status);
+      })
+      .reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+    return Math.max(0, Number(selectedOrder.total || 0) - reserved);
+  }, [selectedOrder, refunds]);
+
   // Maximum eligible amount
   const maxRefundAmount = useMemo(() => {
     if (!selectedOrder) return 0;
     const orderTotal = selectedOrder.total || 0;
 
     if (refundType === 'FULL') {
-      return orderTotal;
+      return remainingRefundableAmount;
     }
 
     // Partial refund mode:
@@ -165,11 +179,11 @@ export function RefundModal() {
         return 0;
       }
       // For a missing-item complaint, calculate the amount strictly from the affected items and quantities
-      return selectedItemsAmount;
+      return Math.min(selectedItemsAmount, remainingRefundableAmount);
     }
 
-    return orderTotal;
-  }, [selectedOrder, refundType, isMissingItemComplaint, hasItemPricing, selectedItemsAmount]);
+    return remainingRefundableAmount;
+  }, [selectedOrder, refundType, isMissingItemComplaint, hasItemPricing, selectedItemsAmount, remainingRefundableAmount]);
 
   // Filtered and deduplicated resolved complaints eligible for this order
   const eligibleComplaints = useMemo(() => {
@@ -495,6 +509,10 @@ export function RefundModal() {
 
     if (!reason.trim()) {
       setError('Please choose a reason for the refund');
+      return;
+    }
+
+    if (!window.confirm(`Initiate a refund of ₹${numericAmount.toFixed(2)}? This action sends the request to the original payment method and cannot be cancelled after Razorpay accepts it.`)) {
       return;
     }
 
@@ -873,6 +891,9 @@ export function RefundModal() {
                     <span className="text-gray-400 italic">Full order refund (read-only)</span>
                   )}
                 </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Remaining refundable balance: ₹{remainingRefundableAmount.toFixed(2)}
+                </p>
 
                 {isMissingItemComplaint && !hasItemPricing && refundType === 'PARTIAL' && (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">

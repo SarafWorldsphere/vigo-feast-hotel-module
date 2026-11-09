@@ -4,6 +4,7 @@ export type ItemAvailability = 'AVAILABLE' | 'TEMP_UNAVAILABLE' | 'OUT_OF_STOCK'
 
 export interface MenuItem {
   id: string;
+  category_id?: string;
   name: string;
   description: string;
   price: number;
@@ -497,6 +498,8 @@ export interface Offer {
   isActive: boolean;
   applicableItems: string[];
   applicableCategories: string[];
+  categoryIds?: string[];
+  menuItemIds?: string[];
   usageCount: number;
   totalDiscountGiven: number;
   status?: OfferStatus;

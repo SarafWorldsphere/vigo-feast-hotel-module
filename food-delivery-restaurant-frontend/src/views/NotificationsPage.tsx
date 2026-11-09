@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useApp } from '@/context/AppContext';
+import type { MappedNotificationItem } from '@/hooks/useNotifications';
 import { useNotifications } from '@/hooks/useNotifications';
 import {
   notificationTypeConfig,
@@ -51,6 +53,7 @@ const filters: { id: FilterType; label: string }[] = [
 
 export function NotificationsPage() {
   const [filter, setFilter] = useState<FilterType>('ALL');
+  const { setPage, setSelectedOrderId, setSelectedRefundId } = useApp();
 
   const {
     notifications,
@@ -65,6 +68,105 @@ export function NotificationsPage() {
     markAllRead,
     goToPage,
   } = useNotifications({ limit: 20, autoFetch: true });
+
+  const handleNotificationClick = (notif: MappedNotificationItem) => {
+    // 1. Mark as read immediately if unread (reduces unread count and header bell count)
+    if (!notif.isRead) {
+      markRead(notif.notificationId);
+    }
+
+    // 2. Navigate based on notification type and entity
+    const rawType = (notif.rawType || '').toUpperCase();
+    const entityType = (notif.entityType || '').toUpperCase();
+    const title = (notif.title || '').toLowerCase();
+    const message = (notif.message || '').toLowerCase();
+    const type = notif.type;
+
+    // Delivery / Pickup notifications -> Delivery Page
+    if (
+      entityType === 'DELIVERY' ||
+      type === 'PICKUP_ALERT' ||
+      rawType.includes('DELIVERY') ||
+      rawType.includes('PICKUP') ||
+      rawType.includes('RIDER') ||
+      title.includes('delivery') ||
+      title.includes('pickup') ||
+      title.includes('rider') ||
+      message.includes('delivery') ||
+      message.includes('rider')
+    ) {
+      setPage('delivery');
+      return;
+    }
+
+    // Refund notifications -> Refunds Page
+    if (
+      entityType === 'REFUND' ||
+      type === 'REFUND' ||
+      rawType.includes('REFUND') ||
+      title.includes('refund') ||
+      message.includes('refund')
+    ) {
+      if (notif.entityId) {
+        setSelectedRefundId(String(notif.entityId));
+      }
+      setPage('refunds');
+      return;
+    }
+
+    // Order notifications (e.g. Order received, order picked up, order delivered) -> Orders Page
+    if (
+      entityType === 'ORDER' ||
+      type === 'NEW_ORDER' ||
+      rawType.includes('ORDER') ||
+      title.includes('order') ||
+      message.includes('order')
+    ) {
+      if (notif.entityId) {
+        setSelectedOrderId(String(notif.entityId));
+      }
+      setPage('orders');
+      return;
+    }
+
+    // Review notifications -> Reviews Page
+    if (
+      type === 'REVIEW' ||
+      rawType.includes('REVIEW') ||
+      title.includes('review') ||
+      title.includes('rating')
+    ) {
+      setPage('reviews');
+      return;
+    }
+
+    // Settlement / Payout notifications -> Earnings Page
+    if (
+      type === 'SETTLEMENT' ||
+      rawType.includes('SETTLEMENT') ||
+      title.includes('settlement') ||
+      title.includes('payout')
+    ) {
+      setPage('earnings');
+      return;
+    }
+
+    // Complaints -> Orders Page
+    if (
+      type === 'COMPLAINT' ||
+      rawType.includes('COMPLAINT') ||
+      title.includes('complaint')
+    ) {
+      if (notif.entityId) {
+        setSelectedOrderId(String(notif.entityId));
+      }
+      setPage('orders');
+      return;
+    }
+
+    // Fallback: Orders Page
+    setPage('orders');
+  };
 
   const formatTime = (iso: string) => {
     try {
@@ -168,8 +270,16 @@ export function NotificationsPage() {
             return (
               <div
                 key={notif.id}
-                onClick={() => !notif.isRead && markRead(notif.notificationId)}
-                className={`card p-4 animate-slide-up cursor-pointer transition-all duration-200 hover:shadow-soft ${
+                onClick={() => handleNotificationClick(notif)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleNotificationClick(notif);
+                  }
+                }}
+                className={`card p-4 animate-slide-up cursor-pointer transition-all duration-200 hover:shadow-soft hover:border-brand-300 dark:hover:border-brand-500/40 group ${
                   !notif.isRead
                     ? 'border-brand-200 dark:border-brand-500/20 bg-brand-50/30 dark:bg-brand-500/5'
                     : ''
@@ -189,8 +299,8 @@ export function NotificationsPage() {
                           <p
                             className={`text-sm ${
                               notif.isRead
-                                ? 'font-medium text-gray-700 dark:text-gray-300'
-                                : 'font-semibold text-gray-900 dark:text-white'
+                                ? 'font-medium text-gray-700 dark:text-gray-300 group-hover:text-brand-600 dark:group-hover:text-brand-400'
+                                : 'font-semibold text-gray-900 dark:text-white group-hover:text-brand-600 dark:group-hover:text-brand-400'
                             }`}
                           >
                             {notif.title}
@@ -203,6 +313,7 @@ export function NotificationsPage() {
                           {formatTime(notif.createdAt)}
                         </p>
                       </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-brand-500 group-hover:translate-x-0.5 transition-all shrink-0 mt-0.5" />
                     </div>
                     <p className="text-sm text-gray-600 dark:text-gray-400 mt-1.5 leading-relaxed">
                       {notif.message}

@@ -164,11 +164,8 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
             : n
         )
       );
-      setUnreadCount((prev) => {
-        const next = Math.max(0, prev - 1);
-        setUnreadNotificationCount(next);
-        return next;
-      });
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+      setUnreadNotificationCount((prev) => Math.max(0, prev - 1));
 
       try {
         await apiMarkNotificationRead(numId);

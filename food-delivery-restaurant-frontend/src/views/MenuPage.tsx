@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
-import { MenuItem, ItemAvailability, Category } from '@/data/mockData';
+import { MenuItem, ItemAvailability, Category, Offer } from '@/data/mockData';
 import { FoodImage } from '@/components/ui/FoodImage';
 import {
   Plus, Search, GripVertical, Eye, EyeOff, Clock, Star, X,
   ChevronUp, ChevronDown, Pencil, Check, ImagePlus, Leaf, Drumstick, Egg,
-  Loader2, AlertCircle, Upload,
+  Loader2, AlertCircle, Upload, Tag, Percent,
 } from 'lucide-react';
 import {
   MenuItemCreateRequest,
@@ -15,12 +15,115 @@ import {
   MenuImageContentType,
 } from '@/services/api';
 
+function isOfferActive(offer: Offer): boolean {
+  if (!offer.isActive) return false;
+  if (offer.status && offer.status.toUpperCase() !== 'ACTIVE') return false;
+  const now = new Date();
+  if (offer.startAt && new Date(offer.startAt) > now) return false;
+  if (offer.endAt && new Date(offer.endAt) < now) return false;
+  return true;
+}
+
+function doesOfferApplyToItem(
+  item: MenuItem,
+  offer: Offer,
+  categories: Category[]
+): boolean {
+  if (!isOfferActive(offer)) return false;
+
+  const hasItemFilters =
+    (offer.menuItemIds && offer.menuItemIds.length > 0) ||
+    (offer.applicableItems && offer.applicableItems.length > 0);
+
+  const hasCategoryFilters =
+    (offer.categoryIds && offer.categoryIds.length > 0) ||
+    (offer.applicableCategories && offer.applicableCategories.length > 0);
+
+  // If storewide offer with no item or category restrictions: applies to ALL items!
+  if (!hasItemFilters && !hasCategoryFilters) {
+    return true;
+  }
+
+  // Check direct item match (by ID or Name)
+  if (hasItemFilters) {
+    const itemIdStr = String(item.id).toLowerCase();
+    const itemName = item.name.trim().toLowerCase();
+
+    const matchesId = offer.menuItemIds?.some(
+      (id) => String(id).toLowerCase() === itemIdStr
+    );
+    const matchesName = offer.applicableItems?.some(
+      (name) => name.trim().toLowerCase() === itemName
+    );
+
+    if (matchesId || matchesName) {
+      return true;
+    }
+  }
+
+  // Check category match (by Category ID or Category Name)
+  if (hasCategoryFilters) {
+    const itemCatId = item.category_id ? String(item.category_id).toLowerCase() : '';
+    const itemCatName = (item.category || '').trim().toLowerCase();
+
+    const matchedCategory = categories.find(
+      (c) =>
+        c.name.trim().toLowerCase() === itemCatName ||
+        (itemCatId && String(c.id).toLowerCase() === itemCatId)
+    );
+    const resolvedCatId = matchedCategory ? String(matchedCategory.id).toLowerCase() : itemCatId;
+    const resolvedCatName = matchedCategory ? matchedCategory.name.trim().toLowerCase() : itemCatName;
+
+    const matchesCatId = offer.categoryIds?.some((id) => {
+      const strId = String(id).toLowerCase();
+      return strId === itemCatId || strId === resolvedCatId;
+    });
+
+    const matchesCatName = offer.applicableCategories?.some((catName) => {
+      const lower = catName.trim().toLowerCase();
+      return (
+        lower === itemCatName ||
+        lower === resolvedCatName ||
+        lower.replace(/s$/, '') === itemCatName.replace(/s$/, '') ||
+        lower.replace(/s$/, '') === resolvedCatName.replace(/s$/, '')
+      );
+    });
+
+    if (matchesCatId || matchesCatName) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function calculateDiscountedPrice(itemPrice: number, offer: Offer): number {
+  if (offer.offerType === 'PERCENTAGE') {
+    let discount = (itemPrice * Number(offer.discountValue)) / 100;
+    if (offer.maxDiscountAmount && Number(offer.maxDiscountAmount) > 0) {
+      discount = Math.min(discount, Number(offer.maxDiscountAmount));
+    }
+    return Math.max(0, Math.round((itemPrice - discount) * 100) / 100);
+  }
+  if (offer.offerType === 'FLAT' || offer.offerType === 'COMBO' || offer.offerType === 'ITEM') {
+    if (offer.discountValue > 0) {
+      let discount = Number(offer.discountValue);
+      if (offer.maxDiscountAmount && Number(offer.maxDiscountAmount) > 0) {
+        discount = Math.min(discount, Number(offer.maxDiscountAmount));
+      }
+      return Math.max(0, itemPrice - discount);
+    }
+  }
+  return itemPrice;
+}
+
 export function MenuPage() {
-  const { menuItems, categories, loadCategories, updateMenuItem, updateMenuItemAvailability, addMenuItem, createMenuItem, reorderCategories, toggleCategoryVisible, addCategory, addToast } = useApp();
+  const { menuItems, categories, offers, loadOffers, loadCategories, updateMenuItem, updateMenuItemAvailability, addMenuItem, createMenuItem, reorderCategories, toggleCategoryVisible, addCategory, addToast } = useApp();
 
   useEffect(() => {
     loadCategories();
-  }, [loadCategories]);
+    loadOffers();
+  }, [loadCategories, loadOffers]);
 
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -31,9 +134,20 @@ export function MenuPage() {
   const [dragOverCategory, setDragOverCategory] = useState<number | null>(null);
   const [updatingAvailabilityId, setUpdatingAvailabilityId] = useState<string | null>(null);
 
+  const itemsWithOffersCount = useMemo(() => {
+    return menuItems.filter(item => offers.some(off => doesOfferApplyToItem(item, off, categories))).length;
+  }, [menuItems, offers, categories]);
+
   const filteredItems = menuItems.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = activeCategory === 'all' || item.category === activeCategory;
+    let matchesCategory = false;
+    if (activeCategory === 'all') {
+      matchesCategory = true;
+    } else if (activeCategory === '__offers__') {
+      matchesCategory = offers.some(off => doesOfferApplyToItem(item, off, categories));
+    } else {
+      matchesCategory = item.category === activeCategory;
+    }
     return matchesSearch && matchesCategory;
   });
 
@@ -176,6 +290,26 @@ export function MenuPage() {
           >
             All Items
           </button>
+          {itemsWithOffersCount > 0 && (
+            <button
+              onClick={() => setActiveCategory('__offers__')}
+              className={`px-3.5 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                activeCategory === '__offers__'
+                  ? 'bg-orange-600 text-white shadow-sm'
+                  : 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-500/20 border border-orange-200 dark:border-orange-500/30'
+              }`}
+            >
+              <Tag className="w-3.5 h-3.5" />
+              On Offer
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                activeCategory === '__offers__'
+                  ? 'bg-white/25 text-white'
+                  : 'bg-orange-200 dark:bg-orange-900/50 text-orange-800 dark:text-orange-300'
+              }`}>
+                {itemsWithOffersCount}
+              </span>
+            </button>
+          )}
           {categories.filter(c => c.visible).map(cat => (
             <button
               key={cat.id}
@@ -227,6 +361,11 @@ export function MenuPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {filteredItems.map((item, i) => {
             const avail = availabilityConfig[item.availability];
+            const itemOffers = offers.filter((off) => doesOfferApplyToItem(item, off, categories));
+            const bestOffer = itemOffers[0];
+            const discountedPrice = bestOffer ? calculateDiscountedPrice(item.price, bestOffer) : item.price;
+            const hasPriceDiscount = discountedPrice < item.price;
+
             return (
               <div
                 key={item.id}
@@ -260,6 +399,20 @@ export function MenuPage() {
                   <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
                   <span className="text-xs text-white font-medium">{item.rating}</span>
                 </div>
+                {itemOffers.length > 0 && (
+                  <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold text-[10px] px-2 py-0.5 rounded-full shadow-md backdrop-blur-sm">
+                    <Tag className="w-2.5 h-2.5" />
+                    <span>
+                      {bestOffer.discountValue > 0
+                        ? (bestOffer.offerType === 'PERCENTAGE'
+                            ? `${bestOffer.discountValue}% OFF`
+                            : `₹${bestOffer.discountValue} OFF`)
+                        : bestOffer.offerType === 'COMBO'
+                        ? 'COMBO'
+                        : 'OFFER'}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
@@ -277,7 +430,16 @@ export function MenuPage() {
                 </div>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 line-clamp-1">{item.description}</p>
                 <div className="flex items-center justify-between">
-                  <p className="text-base font-bold text-gray-900 dark:text-white">₹{item.price}</p>
+                  <div className="flex items-baseline gap-1.5">
+                    <p className="text-base font-bold text-gray-900 dark:text-white">
+                      ₹{hasPriceDiscount ? discountedPrice : item.price}
+                    </p>
+                    {hasPriceDiscount && (
+                      <span className="text-xs text-gray-400 dark:text-gray-500 line-through font-medium">
+                        ₹{item.price}
+                      </span>
+                    )}
+                  </div>
                   <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
                     <Clock className="w-3 h-3" />
                     {item.prepTime}m
@@ -290,6 +452,43 @@ export function MenuPage() {
                         {v.name} ₹{v.price}
                       </span>
                     ))}
+                  </div>
+                )}
+
+                {/* Applied Active Offers Banner */}
+                {itemOffers.length > 0 && (
+                  <div className="mt-2.5 pt-2 border-t border-gray-100 dark:border-gray-800 space-y-1">
+                    {itemOffers.map((off) => {
+                      const discountBadge =
+                        off.offerType === 'PERCENTAGE'
+                          ? `${off.discountValue}% OFF`
+                          : off.discountValue > 0
+                          ? `₹${off.discountValue} OFF`
+                          : off.offerType;
+
+                      return (
+                        <div
+                          key={off.id}
+                          className="flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg bg-orange-50 dark:bg-orange-500/10 border border-orange-200/80 dark:border-orange-500/20 text-orange-900 dark:text-orange-200 text-xs"
+                          title={`${off.name} (${discountBadge})`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-500 text-white text-[8px] font-black shrink-0">
+                              %
+                            </span>
+                            <span className="font-semibold text-[11px] truncate">{off.name}</span>
+                            {off.offerCode && (
+                              <span className="px-1 py-0.2 rounded bg-orange-200/60 dark:bg-orange-900/40 text-[9px] font-mono font-bold text-orange-900 dark:text-orange-200 shrink-0">
+                                {off.offerCode}
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-bold text-[11px] text-orange-600 dark:text-orange-400 shrink-0">
+                            {discountBadge}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -477,7 +676,8 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
   onClose: () => void;
   onSave?: (updates: Partial<MenuItem> | MenuItem) => Promise<void> | void;
 }) {
-  const { createMenuItem, loadCategories, addToast } = useApp();
+  const { createMenuItem, loadCategories, addToast, offers } = useApp();
+  const itemOffers = item ? offers.filter((off) => doesOfferApplyToItem(item, off, categories)) : [];
   const isAdd = mode === 'add';
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -741,6 +941,19 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
         </div>
 
         <div className="p-4 space-y-4">
+          {itemOffers.length > 0 && (
+            <div className="p-3 rounded-xl bg-orange-50 dark:bg-orange-500/10 border border-orange-200 dark:border-orange-500/20 flex items-start gap-2.5">
+              <Tag className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="text-xs font-semibold text-orange-900 dark:text-orange-200">
+                  Active Offer Applied ({itemOffers.length})
+                </p>
+                <p className="text-xs text-orange-700 dark:text-orange-300">
+                  {itemOffers.map((o) => `${o.name} (${o.offerType === 'PERCENTAGE' ? `${o.discountValue}% OFF` : `₹${o.discountValue} OFF`})`).join(', ')}
+                </p>
+              </div>
+            </div>
+          )}
           {/* Image Upload & Selection Section */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

@@ -19,10 +19,33 @@ const tabConfig: { id: OrderTab; label: string; statuses: OrderStatus[] }[] = [
   { id: 'CANCELLED', label: 'Cancelled', statuses: ['CANCELLED', 'FAILED', 'REFUNDED'] },
 ];
 
+const LIFECYCLE_TABS: OrderTab[] = ['NEW', 'ACCEPTED', 'PREPARING', 'READY', 'PICKED_UP'];
+const TERMINAL_TABS: OrderTab[] = ['COMPLETED', 'REJECTED', 'CANCELLED'];
+
+function isToday(dateStr?: string | null): boolean {
+  if (!dateStr) return false;
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    return trimmed === todayStr;
+  }
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export function OrdersPage() {
   const { orders, loadOrders, selectedOrderId, setSelectedOrderId, updateOrderStatus, addToast, refunds, openRefundModal, viewRefund, availability } = useApp();
   const [activeTab, setActiveTab] = useState<OrderTab>('NEW');
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const isOffline = availability && availability.status === 'OFFLINE';
+  const isPaused = availability && (availability.status === 'PAUSED' || availability.is_paused);
 
   useEffect(() => {
     loadOrders();
@@ -35,21 +58,81 @@ export function OrdersPage() {
   };
 
   const filteredOrders = useMemo(() => {
-    const tab = tabConfig.find(t => t.id === activeTab)!;
-    return orders.filter(o => tab.statuses.includes(o.status));
-  }, [orders, activeTab]);
+    // When the restaurant is offline (not open on that day), there are no orders in the active lifecycle
+    if (isOffline && LIFECYCLE_TABS.includes(activeTab)) {
+      return [];
+    }
+    const tab = tabConfig.find(t => t.id === activeTab);
+    if (!tab) return [];
+
+    return orders.filter(o => {
+      if (!tab.statuses.includes(o.status)) return false;
+      // Completed, rejected, or cancelled tabs: show only today's completed/rejected/cancelled orders
+      if (TERMINAL_TABS.includes(activeTab)) {
+        if (!isToday(o.updatedAt) && !isToday(o.placedAt)) return false;
+        const placedMs = new Date(o.placedAt).getTime();
+        if (!isNaN(placedMs) && Date.now() - placedMs > 24 * 60 * 60 * 1000) {
+          return false;
+        }
+        return true;
+      }
+      // Active lifecycle orders: must have been created on the current day
+      return isToday(o.placedAt);
+    });
+  }, [orders, activeTab, isOffline]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     tabConfig.forEach(t => {
-      counts[t.id] = orders.filter(o => t.statuses.includes(o.status)).length;
+      if (isOffline && LIFECYCLE_TABS.includes(t.id)) {
+        counts[t.id] = 0;
+      } else {
+        counts[t.id] = orders.filter(o => {
+          if (!t.statuses.includes(o.status)) return false;
+          if (TERMINAL_TABS.includes(t.id)) {
+            if (!isToday(o.updatedAt) && !isToday(o.placedAt)) return false;
+            const placedMs = new Date(o.placedAt).getTime();
+            if (!isNaN(placedMs) && Date.now() - placedMs > 24 * 60 * 60 * 1000) {
+              return false;
+            }
+            return true;
+          }
+          return isToday(o.placedAt);
+        }).length;
+      }
     });
     return counts;
-  }, [orders]);
+  }, [orders, isOffline]);
 
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null;
 
   const handleAction = async (order: Order, action: 'accept' | 'reject' | 'prepare' | 'ready') => {
+    if (isOffline) {
+      addToast({
+        type: 'error',
+        title: 'Restaurant Offline',
+        message: 'Cannot process orders while the restaurant is closed for today.',
+      });
+      return;
+    }
+
+    if (action === 'accept' && isPaused) {
+      addToast({
+        type: 'warning',
+        title: 'Ordering Paused',
+        message: 'Cannot accept new orders while restaurant ordering is paused. Resume orders first.',
+      });
+      return;
+    }
+
+    if (!isToday(order.placedAt)) {
+      addToast({
+        type: 'error',
+        title: 'Order Expired',
+        message: 'Only orders placed on the current day can be processed.',
+      });
+      return;
+    }
     const actionMap = {
       accept: { status: 'ACCEPTED' as OrderStatus, label: 'Order accepted', type: 'success' as const },
       reject: { status: 'REJECTED' as OrderStatus, label: 'Order rejected', type: 'error' as const },
@@ -78,12 +161,12 @@ export function OrdersPage() {
                 Online Ordering is Currently Offline ({availability.status === 'PAUSED' ? 'Paused' : 'Closed'})
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                {availability.reason === 'TEMPORARILY_PAUSED'
-                  ? 'Orders are temporarily paused. Ongoing accepted orders will continue their lifecycle.'
-                  : availability.reason === 'OUTSIDE_ORDERING_HOURS'
-                  ? 'Outside configured online-ordering hours. New orders will not be received.'
+                {availability.status === 'PAUSED' || availability.reason === 'TEMPORARILY_PAUSED'
+                  ? 'Orders are temporarily paused. Ongoing received orders can continue to be processed.'
                   : availability.reason === 'CLOSED_TODAY'
-                  ? 'The restaurant is closed for today according to schedule.'
+                  ? 'The restaurant is closed for today according to schedule. There are no orders in the active lifecycle.'
+                  : availability.reason === 'OUTSIDE_ORDERING_HOURS'
+                  ? 'Outside configured online-ordering hours. New orders will not be received and active orders cannot be processed.'
                   : 'New orders will not be received until the next opening window.'}
               </p>
             </div>
@@ -129,7 +212,16 @@ export function OrdersPage() {
       {filteredOrders.length === 0 ? (
         <div className="card p-12 text-center">
           <PackageCheck className="w-12 h-12 text-gray-300 dark:text-gray-700 mx-auto mb-3" />
-          <p className="text-sm text-gray-400 dark:text-gray-500">No orders in this category</p>
+          <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            {isOffline && LIFECYCLE_TABS.includes(activeTab)
+              ? 'Restaurant is Offline'
+              : 'No orders in this category'}
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            {isOffline && LIFECYCLE_TABS.includes(activeTab)
+              ? 'The restaurant is closed for today according to schedule. There are no orders in the active lifecycle.'
+              : 'Orders will appear here as they transition to this stage.'}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -138,6 +230,7 @@ export function OrdersPage() {
               key={order.id}
               order={order}
               index={i}
+              isPaused={Boolean(isPaused)}
               onClick={() => setSelectedOrderId(order.id)}
               onAction={(a) => handleAction(order, a)}
             />
@@ -149,6 +242,7 @@ export function OrdersPage() {
       {selectedOrder && (
         <OrderDrawer
           order={selectedOrder}
+          isPaused={Boolean(isPaused)}
           onClose={() => setSelectedOrderId(null)}
           onAction={(a) => handleAction(selectedOrder, a)}
           refunds={refunds}
@@ -160,9 +254,10 @@ export function OrdersPage() {
   );
 }
 
-function OrderCard({ order, index, onClick, onAction }: {
+function OrderCard({ order, index, isPaused, onClick, onAction }: {
   order: Order;
   index: number;
+  isPaused?: boolean;
   onClick: () => void;
   onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready') => void;
 }) {
@@ -226,7 +321,12 @@ function OrderCard({ order, index, onClick, onAction }: {
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800" onClick={(e) => e.stopPropagation()}>
           {order.status === 'PLACED' && (
             <>
-              <button onClick={() => onAction('accept')} className="btn-success flex-1 text-xs py-2">
+              <button
+                onClick={() => onAction('accept')}
+                disabled={Boolean(isPaused)}
+                title={isPaused ? 'Cannot accept new orders while ordering is paused' : 'Accept order'}
+                className={`btn-success flex-1 text-xs py-2 ${isPaused ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
                 <CheckCircle2 className="w-4 h-4" /> Accept
               </button>
               <button onClick={() => onAction('reject')} className="btn-danger text-xs py-2 px-3">
@@ -257,6 +357,7 @@ function OrderCard({ order, index, onClick, onAction }: {
 
 function OrderDrawer({
   order,
+  isPaused,
   onClose,
   onAction,
   refunds,
@@ -264,6 +365,7 @@ function OrderDrawer({
   viewRefund,
 }: {
   order: Order;
+  isPaused?: boolean;
   onClose: () => void;
   onAction: (a: 'accept' | 'reject' | 'prepare' | 'ready') => void;
   refunds: any[];
@@ -531,7 +633,12 @@ function OrderDrawer({
         <div className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-4 shrink-0">
           {order.status === 'PLACED' && (
             <div className="flex gap-2">
-              <button onClick={() => onAction('accept')} className="btn-success flex-1">
+              <button
+                onClick={() => onAction('accept')}
+                disabled={Boolean(isPaused)}
+                title={isPaused ? 'Cannot accept new orders while ordering is paused' : 'Accept order'}
+                className={`btn-success flex-1 ${isPaused ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
                 <CheckCircle2 className="w-5 h-5" /> Accept Order
               </button>
               <button onClick={() => onAction('reject')} className="btn-danger px-4">

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 from typing import Literal
 import uuid
 from uuid import UUID
@@ -22,12 +23,18 @@ from app.schemas.menu import (
     MenuItemAvailabilityUpdateRequest,
     MenuItemCreateRequest,
     MenuItemResponse,
+    MenuItemUpdateRequest,
 )
 from app.services.s3_service import (
+    delete_object,
+    delete_s3_object,
+    extract_s3_key,
     generate_upload_url,
     generate_view_url,
     get_object_metadata,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/menu",
@@ -42,6 +49,10 @@ class MenuImageUploadRequest(BaseModel):
         "image/webp",
     ]
     file_size_bytes: int = Field(gt=0, le=5 * 1024 * 1024)
+
+
+class MenuItemImageUpdateRequest(BaseModel):
+    object_key: str
 
 
 @router.post("/images/upload-url")
@@ -307,6 +318,126 @@ def list_categories(
     return categories
 
 
+@router.delete(
+    "/categories/{category_id}",
+    status_code=status.HTTP_200_OK,
+)
+def delete_category(
+    category_id: UUID,
+    owner: RestaurantOwner = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+):
+    # 1. Find category belonging to authenticated owner's restaurant
+    category = (
+        db.query(MenuCategory)
+        .join(Restaurant, Restaurant.id == MenuCategory.restaurant_id)
+        .filter(
+            MenuCategory.id == category_id,
+            Restaurant.owner_id == owner.id,
+            MenuCategory.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found for your restaurant.",
+        )
+
+    # 2. Fetch all non-deleted items in this category
+    items = (
+        db.query(MenuItem)
+        .filter(
+            MenuItem.category_id == category.id,
+            MenuItem.is_deleted.is_(False),
+        )
+        .all()
+    )
+
+    # Collect unique image keys before soft-deleting items
+    image_keys = {
+        item.image_key
+        for item in items
+        if item.image_key
+    }
+
+    # 3. Soft-delete category
+    category.is_deleted = True
+    category.is_active = False
+    category.status = "DELETED"
+
+    # Soft-delete items belonging to this category
+    for item in items:
+        item.is_deleted = True
+        item.is_active = False
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to delete category: %s", category_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete category.",
+        )
+
+    # 4. Clean up S3 images
+    images_deleted = 0
+    images_skipped = 0
+    images_pending = 0
+
+    logger.info(
+        "Initiating S3 image cleanup for category %s. Image keys collected: %s",
+        category.id,
+        image_keys,
+    )
+
+    for raw_key in image_keys:
+        clean_key = extract_s3_key(raw_key)
+        if not clean_key:
+            logger.info("Key %r is not an S3 key; skipping S3 deletion.", raw_key)
+            images_skipped += 1
+            continue
+
+        try:
+            # Check whether another active menu item uses the same image
+            image_in_use = (
+                db.query(MenuItem.id)
+                .filter(
+                    (MenuItem.image_key == raw_key) | (MenuItem.image_key == clean_key),
+                    MenuItem.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if image_in_use:
+                logger.info(
+                    "Image key %s is in use by another active item; skipping deletion.",
+                    clean_key,
+                )
+                images_skipped += 1
+            else:
+                was_deleted = delete_s3_object(clean_key)
+                if was_deleted:
+                    images_deleted += 1
+                else:
+                    images_skipped += 1
+        except Exception:
+            images_pending += 1
+            logger.exception("Failed to delete S3 image: %s", clean_key)
+
+    # 5. Return result
+    return {
+        "message": "Category deleted successfully",
+        "id": str(category.id),
+        "items_deleted": len(items),
+        "images_deleted": images_deleted,
+        "images_skipped": images_skipped,
+        "image_cleanup_pending": images_pending > 0,
+        "images_pending": images_pending,
+    }
+
+
 def build_menu_item_response(item: MenuItem) -> dict:
     data = MenuItemResponse.model_validate(item).model_dump()
     data["image_url"] = (
@@ -540,3 +671,277 @@ def update_menu_item_availability(
     db.commit()
 
     return build_menu_item_response(menu_item)
+
+
+@router.patch(
+    "/items/{item_id}",
+    response_model=MenuItemResponse,
+)
+def update_menu_item(
+    item_id: UUID,
+    request: MenuItemUpdateRequest,
+    owner: RestaurantOwner = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+):
+    # 1. Find menu item belonging to authenticated owner
+    menu_item = (
+        db.query(MenuItem)
+        .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+        .filter(
+            MenuItem.id == item_id,
+            Restaurant.owner_id == owner.id,
+            MenuItem.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not menu_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Menu item not found for your restaurant.",
+        )
+
+    # 2. Update category if provided
+    if request.category_id:
+        category = (
+            db.query(MenuCategory)
+            .filter(
+                MenuCategory.id == request.category_id,
+                MenuCategory.restaurant_id == menu_item.restaurant_id,
+                MenuCategory.is_active.is_(True),
+                MenuCategory.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected category not found.",
+            )
+        menu_item.category_id = category.id
+    elif request.category_name:
+        trimmed_cat = request.category_name.strip()
+        category = (
+            db.query(MenuCategory)
+            .filter(
+                func.lower(MenuCategory.name) == trimmed_cat.lower(),
+                MenuCategory.restaurant_id == menu_item.restaurant_id,
+                MenuCategory.is_active.is_(True),
+                MenuCategory.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if not category and trimmed_cat:
+            max_cat_order = (
+                db.query(func.max(MenuCategory.display_order))
+                .filter(MenuCategory.restaurant_id == menu_item.restaurant_id)
+                .scalar()
+            )
+            category = MenuCategory(
+                restaurant_id=menu_item.restaurant_id,
+                name=trimmed_cat,
+                display_order=(max_cat_order or 0) + 1,
+                is_active=True,
+                is_deleted=False,
+                status="ACTIVE",
+            )
+            db.add(category)
+            db.commit()
+            db.refresh(category)
+        if category:
+            menu_item.category_id = category.id
+
+    # 3. Update other fields if provided
+    if request.name is not None:
+        menu_item.name = request.name
+    if request.description is not None:
+        menu_item.description = request.description
+    if request.base_price is not None:
+        menu_item.base_price = request.base_price
+    if request.food_type is not None:
+        menu_item.food_type = request.food_type
+    if request.preparation_time_minutes is not None:
+        menu_item.preparation_time_minutes = request.preparation_time_minutes
+
+    try:
+        db.commit()
+        db.refresh(menu_item)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update menu item.",
+        )
+
+    return build_menu_item_response(menu_item)
+
+
+@router.patch(
+    "/items/{item_id}/image",
+    response_model=MenuItemResponse,
+)
+def update_menu_item_image(
+    item_id: UUID,
+    request: MenuItemImageUpdateRequest,
+    owner: RestaurantOwner = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+):
+    # 1. Find menu item belonging to authenticated owner
+    menu_item = (
+        db.query(MenuItem)
+        .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+        .filter(
+            MenuItem.id == item_id,
+            Restaurant.owner_id == owner.id,
+            MenuItem.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not menu_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Menu item not found for your restaurant.",
+        )
+
+    # 2. Validate that the new key belongs to this restaurant
+    expected_prefix = (
+        f"restaurants/{menu_item.restaurant_id}/menu/"
+    )
+
+    if not request.object_key.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image key for this restaurant.",
+        )
+
+    # 3. Verify that this image was uploaded and confirmed
+    confirmed_upload = (
+        db.query(MediaUpload)
+        .filter(
+            MediaUpload.object_key == request.object_key,
+            MediaUpload.restaurant_id == menu_item.restaurant_id,
+            MediaUpload.media_type == "MENU_IMAGE",
+            MediaUpload.status == "CONFIRMED",
+        )
+        .first()
+    )
+
+    if not confirmed_upload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image upload must be confirmed before updating.",
+        )
+
+    # 4. Replace existing image reference
+    old_image_key = menu_item.image_key
+
+    menu_item.image_key = request.object_key
+
+    try:
+        db.commit()
+        db.refresh(menu_item)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to update menu item image.",
+        )
+
+    # 5. Return updated menu item
+    return build_menu_item_response(menu_item)
+
+
+@router.delete(
+    "/items/{item_id}",
+    status_code=status.HTTP_200_OK,
+)
+def delete_menu_item(
+    item_id: UUID,
+    owner: RestaurantOwner = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+):
+    # 1. Verify that the item belongs to the authenticated owner
+    menu_item = (
+        db.query(MenuItem)
+        .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+        .filter(
+            MenuItem.id == item_id,
+            Restaurant.owner_id == owner.id,
+            MenuItem.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not menu_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Menu item not found for your restaurant.",
+        )
+
+    # 2. Keep the S3 key before changing the database record
+    image_key = menu_item.image_key
+
+    # 3. Soft-delete the menu item
+    menu_item.is_deleted = True
+    menu_item.is_active = False
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to delete menu item from database: %s", item_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete menu item.",
+        )
+
+    # 4. Delete the image from S3. Retain image_key when cleanup fails so it
+    # can be retried while the menu item remains soft-deleted.
+    image_deleted = not bool(image_key)
+    if image_key:
+        clean_key = extract_s3_key(image_key)
+        if clean_key:
+            try:
+                # Do not remove a shared object that an active item still uses.
+                image_in_use = (
+                    db.query(MenuItem.id)
+                    .filter(
+                        (MenuItem.image_key == image_key) | (MenuItem.image_key == clean_key),
+                        MenuItem.id != item_id,
+                        MenuItem.is_deleted.is_(False),
+                    )
+                    .first()
+                )
+                if not image_in_use:
+                    delete_object(clean_key)
+                else:
+                    logger.info("Image %s is still in use by another item.", clean_key)
+
+                # The object was deleted or is shared by another active item;
+                # this soft-deleted item no longer needs to retain its key.
+                menu_item.image_key = None
+                db.commit()
+                image_deleted = True
+            except Exception:
+                db.rollback()
+                image_deleted = False
+                logger.exception(
+                    "Menu item %s was deleted, but S3 image cleanup failed: %s",
+                    item_id,
+                    clean_key,
+                )
+        else:
+            logger.warning(
+                "Menu item %s was deleted, but image key is invalid: %r",
+                item_id,
+                image_key,
+            )
+
+    # 5. Return the result
+    return {
+        "success": True,
+        "message": "Menu item deleted successfully",
+        "item_id": str(item_id),
+        "image_cleanup_pending": bool(image_key) and not image_deleted,
+    }

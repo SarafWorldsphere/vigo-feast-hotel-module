@@ -1,9 +1,10 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
 import {
   MenuItem, Category, ItemAvailability,
   Refund, Complaint, ComplaintType, ComplaintStatus,
+  Offer,
 } from '@/data/mockData';
 import type { Order } from '@/types/order';
 import { Delivery, DeliveryStage } from '@/types/delivery';
@@ -21,9 +22,13 @@ import {
   apiGetRegistrationStatus,
   apiCreateCategory,
   apiGetCategories,
+  apiDeleteCategory,
   CategoryResponse,
   MenuItemCreateRequest,
   apiCreateMenuItem,
+  apiUpdateMenuItem,
+  apiDeleteMenuItem,
+  MenuItemUpdateRequest,
   apiGetMenuItems,
   apiUpdateMenuItemAvailability,
   MenuItemAvailability,
@@ -33,6 +38,8 @@ import {
   getValidAuthToken,
   apiGetOrder,
   apiGetOrders,
+  apiGetOffers,
+  mapBackendOfferToFrontend,
   apiGetDelivery,
   apiAcceptOrder,
   apiRejectOrder,
@@ -57,7 +64,7 @@ import {
 } from '@/services/api';
 
 export type Page = 'dashboard' | 'orders' | 'menu' | 'delivery' | 'earnings' | 'refunds' | 'analytics' | 'offers' | 'reviews' | 'notifications' | 'settings';
-export type AuthView = 'login' | 'signup' | 'wizard' | 'status' | 'register';
+export type AuthView = 'login' | 'signup' | 'wizard' | 'status' | 'register' | 'forgot-password';
 
 export interface OwnerSession {
   id: string;
@@ -126,15 +133,20 @@ interface AppState {
   setSelectedOrderId: (id: string | null) => void;
   viewOrder: (id: string) => void;
   menuItems: MenuItem[];
-  updateMenuItem: (id: string, updates: Partial<MenuItem>) => void;
+  updateMenuItem: (id: string, updates: Partial<MenuItem>) => Promise<MenuItem | void> | void;
+  removeMenuItem: (id: string) => Promise<void> | void;
   updateMenuItemAvailability: (id: string, availability: ItemAvailability) => Promise<MenuItem>;
   addMenuItem: (item: MenuItem) => void;
   createMenuItem: (payload: MenuItemCreateRequest) => Promise<MenuItem>;
   loadMenuItems: () => Promise<void>;
+  offers: Offer[];
+  setOffers: React.Dispatch<React.SetStateAction<Offer[]>>;
+  loadOffers: () => Promise<void>;
   categories: Category[];
   loadCategories: () => Promise<void>;
   reorderCategories: (newOrder: Category[]) => void;
   addCategory: (name: string, visible?: boolean) => Promise<Category>;
+  deleteCategory: (id: string) => Promise<void>;
   toggleCategoryVisible: (id: string) => void;
   toasts: Toast[];
   addToast: (t: Omit<Toast, 'id'>) => void;
@@ -144,7 +156,7 @@ interface AppState {
   newOrderCount: number;
   clearNewOrderCount: () => void;
   unreadNotificationCount: number;
-  setUnreadNotificationCount: (n: number) => void;
+  setUnreadNotificationCount: React.Dispatch<React.SetStateAction<number>>;
   loadUnreadNotificationCount: () => Promise<void>;
   addNotification: (n: { type: string; title: string; message: string }) => void;
   // Shared Refunds & Complaints State
@@ -211,6 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [newOrderCount, setNewOrderCount] = useState(0);
@@ -482,8 +495,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (apiFn) {
       try {
         await apiFn(id);
-        // Refresh both orders and deliveries from the database
-        await Promise.all([loadOrders(), loadDeliveries()]);
+        await loadOrders();
         return;
       } catch (err) {
         console.error(`Failed to update order ${id} to ${status}:`, err);
@@ -515,7 +527,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
       })
     );
-  }, [loadOrders, loadDeliveries]);
+  }, [loadOrders]);
 
   // Real-time WebSocket connection listening to OrderListener events from backend
   useEffect(() => {
@@ -1024,8 +1036,63 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 
 
-  const updateMenuItem = useCallback((id: string, updates: Partial<MenuItem>) => {
-    setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+  const updateMenuItem = useCallback(async (id: string, updates: Partial<MenuItem>): Promise<MenuItem | void> => {
+    try {
+      let categoryId = updates.category_id;
+      if (!categoryId && updates.category) {
+        const found = categories.find((c) => c.name.toLowerCase() === updates.category!.toLowerCase());
+        if (found) categoryId = found.id;
+      }
+
+      const payload: MenuItemUpdateRequest = {};
+      if (categoryId) payload.category_id = categoryId;
+      if (updates.category) payload.category_name = updates.category;
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.description !== undefined) payload.description = updates.description;
+      if (updates.price !== undefined) payload.base_price = updates.price;
+      if (updates.foodType !== undefined) payload.food_type = updates.foodType;
+      if (updates.prepTime !== undefined) payload.preparation_time_minutes = updates.prepTime;
+
+      const response = await apiUpdateMenuItem(id, payload);
+
+      const catMap = new Map(categories.map((c) => [c.id, c.name]));
+      const resolvedCategory = updates.category || catMap.get(response.category_id) || 'Uncategorized';
+
+      setMenuItems((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? {
+                ...m,
+                ...updates,
+                name: response.name,
+                description: response.description || '',
+                price: Number(response.base_price),
+                category: resolvedCategory,
+                category_id: response.category_id,
+                prepTime: response.preparation_time_minutes,
+                foodType: (response.food_type as any) || m.foodType,
+                image: response.image_url || m.image,
+                image_url: response.image_url || m.image_url,
+              }
+            : m
+        )
+      );
+    } catch (err) {
+      console.error('Failed to update menu item in database:', err);
+      setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+      throw err;
+    }
+  }, [categories]);
+
+  const removeMenuItem = useCallback(async (id: string): Promise<void> => {
+    try {
+      await apiDeleteMenuItem(id);
+      setMenuItems((prev) => prev.filter((item) => item.id !== id));
+    } catch (err) {
+      console.error('Failed to delete menu item from database:', err);
+      setMenuItems((prev) => prev.filter((item) => item.id !== id));
+      throw err;
+    }
   }, []);
 
   const updateMenuItemAvailability = useCallback(async (id: string, availability: ItemAvailability): Promise<MenuItem> => {
@@ -1067,6 +1134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const catMap = new Map(categories.map((c) => [c.id, c.name]));
         const mappedDb: MenuItem[] = apiItems.map((it) => ({
           id: it.id,
+          category_id: it.category_id,
           name: it.name,
           description: it.description || '',
           price: Number(it.base_price),
@@ -1097,6 +1165,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const catMap = new Map((apiCats || []).map((c) => [c.id, c.name]));
       const mappedDb: MenuItem[] = (apiItems || []).map((it) => ({
         id: it.id,
+        category_id: it.category_id,
         name: it.name,
         description: it.description || '',
         price: Number(it.base_price),
@@ -1151,6 +1220,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [categories]
   );
+
+  const categoriesRef = useRef<Category[]>(categories);
+  categoriesRef.current = categories;
+  const menuItemsRef = useRef<MenuItem[]>(menuItems);
+  menuItemsRef.current = menuItems;
+
+  const loadOffers = useCallback(async () => {
+    try {
+      const categoryMap: Record<string, string> = {};
+      categoriesRef.current.forEach((c) => {
+        categoryMap[c.id] = c.name;
+      });
+      const itemMap: Record<string, string> = {};
+      menuItemsRef.current.forEach((m) => {
+        itemMap[m.id] = m.name;
+      });
+
+      const res = await apiGetOffers();
+      if (res && Array.isArray(res.offers)) {
+        const mapped = res.offers.map((bo) =>
+          mapBackendOfferToFrontend(bo, categoryMap, itemMap)
+        );
+        setOffers(mapped);
+      }
+    } catch (err) {
+      console.warn('Failed to load offers in AppContext:', err);
+    }
+  }, []);
 
   const viewOrder = useCallback((id: string) => {
     setSelectedOrderId(id);
@@ -1302,6 +1399,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       void loadRefunds();
       void loadOrderSettings();
       void loadAvailability();
+      void loadOffers();
     }
   }, [
     isAuthenticated,
@@ -1312,6 +1410,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadRefunds,
     loadOrderSettings,
     loadAvailability,
+    loadOffers,
   ]);
 
   // Boundary timer: automatically refetch when next_change_at boundary occurs
@@ -1380,6 +1479,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const deleteCategory = useCallback(async (id: string): Promise<void> => {
+    try {
+      await apiDeleteCategory(id);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      setMenuItems((prev) => prev.filter((m) => m.category_id !== id));
+    } catch (err) {
+      console.error('Failed to delete category:', err);
+      throw err;
+    }
+  }, []);
+
   const toggleCategoryVisible = useCallback((id: string) => {
     setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, visible: !c.visible } : c)));
   }, []);
@@ -1441,14 +1551,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         viewOrder,
         menuItems,
         updateMenuItem,
+        removeMenuItem,
         updateMenuItemAvailability,
         addMenuItem,
         createMenuItem,
         loadMenuItems,
+        offers,
+        setOffers,
+        loadOffers,
         categories,
         loadCategories,
         reorderCategories,
         addCategory,
+        deleteCategory,
         toggleCategoryVisible,
         toasts,
         addToast,

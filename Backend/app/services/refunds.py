@@ -1,5 +1,7 @@
 
+from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -13,6 +15,9 @@ from app.models.payment import Payment
 from app.models.refund import Refund
 from app.models.restaurant import Restaurant
 from app.schemas.refunds import RefundCreate
+from app.services import razorpay_service
+
+logger = logging.getLogger(__name__)
 
 
 COD_METHODS = {"COD", "CASH_ON_DELIVERY"}
@@ -33,13 +38,70 @@ ONLINE_METHODS = {
 
 SUCCESSFUL_PAYMENT_STATUSES = {"COMPLETED", "SUCCESS", "PAID"}
 
-# Reserve every existing refund until its final outcome is reconciled.
+# Reserve active refunds until final outcome is reconciled.
 RESERVED_REFUND_STATUSES = (
     "PENDING",
     "PROCESSING",
     "COMPLETED",
-    "FAILED",
 )
+
+
+def _apply_gateway_response(db: Session, refund: Refund, payload: dict) -> Refund:
+    """Persist a gateway response in a short transaction after an HTTP call."""
+    refund.execution_reference = payload.get("id") or refund.execution_reference
+    refund.status = razorpay_service.map_refund_status(payload.get("status"))
+    if refund.status == "COMPLETED":
+        refund.completed_at = datetime.now(timezone.utc)
+        from app.services.settlements import register_completed_refund_recovery
+        register_completed_refund_recovery(db, refund)
+    elif refund.status == "FAILED":
+        refund.failure_reason = payload.get("error_description") or "Refund failed at gateway"
+    db.commit()
+    db.refresh(refund)
+    return refund
+
+
+def submit_razorpay_refund(db: Session, refund_id: int) -> Refund:
+    """Submit a persisted refund request or reconcile an ambiguous prior attempt.
+
+    No database transaction is kept open during the network call.  Retrying a
+    PENDING/PROCESSING request always reconciles first, so a timeout cannot
+    create another customer refund.
+    """
+    refund = db.query(Refund).filter(Refund.refund_id == refund_id).first()
+    if not refund or refund.status in {"COMPLETED", "FAILED"}:
+        return refund
+    payment = db.query(Payment).filter(Payment.payment_id == refund.payment_id).first()
+    if not payment or not payment.gateway_payment_ref:
+        refund.status = "FAILED"
+        refund.failure_reason = "Payment record is missing Razorpay payment ID"
+        db.commit()
+        return refund
+
+    receipt = f"vgf-refund-{refund.refund_id}"
+    known = razorpay_service.find_refund(
+        payment.gateway_payment_ref, str(refund.idempotency_key), receipt
+    )
+    if known:
+        return _apply_gateway_response(db, refund, known)
+
+    try:
+        response = razorpay_service.create_refund(
+            payment.gateway_payment_ref, refund.amount, str(refund.idempotency_key), receipt
+        )
+        return _apply_gateway_response(db, refund, response)
+    except razorpay_service.RazorpayAmbiguousError as exc:
+        # It may already exist at Razorpay. A later retry/webhook reconciles it.
+        refund.status = "PROCESSING"
+        refund.failure_reason = None
+        db.commit()
+        logger.warning("Refund %s requires Razorpay reconciliation: %s", refund_id, exc)
+        return refund
+    except razorpay_service.RazorpayGatewayError as exc:
+        refund.status = "FAILED"
+        refund.failure_reason = str(exc)[:1000]
+        db.commit()
+        return refund
 
 
 def create_refund(
@@ -235,7 +297,7 @@ def create_refund(
                 func.coalesce(func.sum(Refund.amount), 0)
             )
             .filter(
-                Refund.order_id == order.order_id,
+                Refund.payment_id == payment.payment_id,
                 Refund.status.in_(RESERVED_REFUND_STATUSES),
             )
             .scalar()
@@ -257,6 +319,7 @@ def create_refund(
 
         refund = Refund(
             order_id=order.order_id,
+            payment_id=payment.payment_id,
             complaint_id=complaint.complaint_id,
             initiated_by_owner_id=owner_id,
             amount=requested_amount,
@@ -267,9 +330,13 @@ def create_refund(
         )
 
         db.add(refund)
-        db.flush()
         db.commit()
         db.refresh(refund)
+
+        # Razorpay is initiated only after the reservation has been committed.
+        # COD remains in the established manual UPI/bank-account workflow.
+        if (payment.gateway_name or "").upper() == "RAZORPAY":
+            refund = submit_razorpay_refund(db, refund.refund_id)
 
         return refund
 

@@ -53,7 +53,7 @@ def create_otp_request(
     purpose = purpose.upper()
     language = language.lower()
 
-    if purpose not in {"REGISTRATION", "LOGIN"}:
+    if purpose not in {"REGISTRATION", "LOGIN", "FORGOT_PASSWORD"}:
         raise ValueError("Invalid OTP purpose")
 
     if language not in {"en", "hi", "te"}:

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -55,6 +55,13 @@ class RestaurantOwner(Base):
         Boolean,
         nullable=False,
         default=False
+    )
+
+    token_version = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     @property

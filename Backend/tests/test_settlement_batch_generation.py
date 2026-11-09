@@ -10,11 +10,13 @@ from sqlalchemy.orm import sessionmaker
 from app.models.hotel_settlement import HotelSettlement
 from app.models.order import Order
 from app.models.refund import Refund
+from app.models.refund_recovery import RefundRecovery, RefundRecoveryAllocation
 from app.models.restaurant import Restaurant
 from app.models.settlement_batch import SettlementBatch
 from app.models.settlement_batch_item import SettlementBatchItem
 from app.services.settlements import (
     generate_settlement_batch,
+    register_completed_refund_recovery,
     REPORTING_TIMEZONE,
 )
 
@@ -25,6 +27,8 @@ class SettlementBatchGenerationTests(unittest.TestCase):
         Restaurant.__table__.create(self.engine)
         Order.__table__.create(self.engine)
         Refund.__table__.create(self.engine)
+        RefundRecovery.__table__.create(self.engine)
+        RefundRecoveryAllocation.__table__.create(self.engine)
         HotelSettlement.__table__.create(self.engine)
         SettlementBatch.__table__.create(self.engine)
         SettlementBatchItem.__table__.create(self.engine)
@@ -195,7 +199,6 @@ class SettlementBatchGenerationTests(unittest.TestCase):
             .count()
         )
         self.assertEqual(hs_count, 1)
-
         batch_item = (
             self.db.query(SettlementBatchItem)
             .filter(SettlementBatchItem.batch_id == batch.batch_id)
@@ -203,6 +206,30 @@ class SettlementBatchGenerationTests(unittest.TestCase):
         )
         self.assertEqual(batch_item.settlement_id, existing_hs.settlement_id)
 
+    def test_paid_order_refund_carries_forward_once(self):
+        day_one = date(2026, 10, 10)
+        order_time = datetime(2026, 10, 10, 12, 0, tzinfo=REPORTING_TIMEZONE)
+        original = Order(order_id=401, customer_id=1, restaurant_id=self.restaurant_id, order_status="DELIVERED", subtotal=Decimal("100.00"), total_amount=Decimal("100.00"), financial_finalized_at=order_time, created_at=order_time, is_deleted=False)
+        self.db.add(original)
+        self.db.commit()
+        paid_batch = generate_settlement_batch(self.db, self.restaurant_id, day_one, day_one)
+        paid_batch.status = "PAID"
+        self.db.commit()
+
+        refund = Refund(order_id=401, amount=Decimal("50.00"), status="COMPLETED", completed_at=datetime.now(timezone.utc))
+        self.db.add(refund)
+        self.db.flush()
+        register_completed_refund_recovery(self.db, refund)
+        self.db.commit()
+
+        next_day = day_one + timedelta(days=1)
+        later = Order(order_id=402, customer_id=2, restaurant_id=self.restaurant_id, order_status="DELIVERED", subtotal=Decimal("100.00"), total_amount=Decimal("100.00"), financial_finalized_at=datetime.combine(next_day, datetime.min.time(), tzinfo=REPORTING_TIMEZONE), created_at=datetime.combine(next_day, datetime.min.time(), tzinfo=REPORTING_TIMEZONE), is_deleted=False)
+        self.db.add(later)
+        self.db.commit()
+        next_batch = generate_settlement_batch(self.db, self.restaurant_id, next_day, next_day)
+        self.assertEqual(next_batch.refunds, Decimal("50.00"))
+        once_net = next_batch.net_amount
+        self.assertEqual(generate_settlement_batch(self.db, self.restaurant_id, next_day, next_day).net_amount, once_net)
 
 if __name__ == "__main__":
     unittest.main()

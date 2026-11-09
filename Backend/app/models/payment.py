@@ -11,7 +11,7 @@ from sqlalchemy import (
     Time,
     func,
 )
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -46,7 +46,14 @@ class Payment(Base):
     )
 
     gateway_name = Column(String, nullable=True)
-    gateway_order_ref = Column(String, nullable=True)
+    # Razorpay Order ID: order_XXXX
+    gateway_order_ref = Column(String(100), nullable=True)
+    # Razorpay Payment ID: pay_XXXX
+    gateway_payment_ref = Column(
+        String(100),
+        nullable=True,
+        unique=True,
+    )
 
     created_at = Column(
         DateTime(timezone=True),
@@ -62,10 +69,7 @@ class Payment(Base):
     )
 
     franchisee_id = Column(
-        postgresql_UUID := __import__(
-            "sqlalchemy.dialects.postgresql",
-            fromlist=["UUID"],
-        ).UUID(as_uuid=True),
+        UUID(as_uuid=True),
         nullable=True,
     )
 

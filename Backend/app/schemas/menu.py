@@ -104,3 +104,48 @@ class MenuItemAvailabilityUpdateRequest(BaseModel):
         "TEMP_UNAVAILABLE",
         "OUT_OF_STOCK",
     ]
+
+
+class MenuItemUpdateRequest(BaseModel):
+    category_id: UUID | None = None
+    category_name: str | None = None
+    name: str | None = None
+    description: str | None = None
+    base_price: Decimal | None = None
+    food_type: Literal["VEG", "NON_VEG", "EGG"] | None = None
+    preparation_time_minutes: int | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Item name must be a string")
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Item name must not be empty")
+        return trimmed
+
+    @field_validator("food_type", mode="before")
+    @classmethod
+    def validate_food_type(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_upper = v.strip().upper()
+            if v_upper in ("VEG", "NON_VEG", "EGG"):
+                return v_upper
+            if v_upper == "NON-VEG":
+                return "NON_VEG"
+        return v
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def validate_description(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Description must be a string")
+        trimmed = v.strip()
+        return trimmed if trimmed else None

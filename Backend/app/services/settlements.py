@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.hotel_settlement import HotelSettlement
 from app.models.order import Order
 from app.models.refund import Refund
+from app.models.refund_recovery import RefundRecovery, RefundRecoveryAllocation
 from app.models.settlement_batch import SettlementBatch
 from app.models.settlement_batch_item import SettlementBatchItem
 from app.services.financial_calculations import (
@@ -20,6 +21,91 @@ from app.services.financial_calculations import (
 )
 
 REPORTING_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def register_completed_refund_recovery(db: Session, refund: Refund) -> RefundRecovery:
+    """Create exactly one recovery receivable for a completed refund.
+
+    It is intentionally not a change to a paid batch.  A recovery allocation
+    is the only way it reduces a settlement, making retries/webhooks safe.
+    """
+    recovery = (
+        db.query(RefundRecovery)
+        .filter(RefundRecovery.refund_id == refund.refund_id)
+        .with_for_update()
+        .first()
+    )
+    if recovery:
+        return recovery
+
+    order = db.query(Order).filter(Order.order_id == refund.order_id).first()
+    if not order:
+        raise ValueError("Cannot create refund recovery without its order")
+    original_batch = (
+        db.query(SettlementBatch)
+        .join(SettlementBatchItem, SettlementBatchItem.batch_id == SettlementBatch.batch_id)
+        .join(HotelSettlement, HotelSettlement.settlement_id == SettlementBatchItem.settlement_id)
+        .filter(HotelSettlement.order_id == refund.order_id)
+        .order_by(SettlementBatch.batch_id.desc())
+        .first()
+    )
+    recovery = RefundRecovery(
+        refund_id=refund.refund_id,
+        restaurant_id=order.restaurant_id,
+        original_batch_id=original_batch.batch_id if original_batch else None,
+        amount=round_money(to_decimal(refund.amount)),
+        recovered_amount=ZERO,
+        status="OUTSTANDING",
+    )
+    db.add(recovery)
+    db.flush()
+
+    # An unpaid original batch is still mutable; recover there first. Paid
+    # batches remain immutable and the receivable carries forward instead.
+    if original_batch and original_batch.status in {"PENDING", "PROCESSING"}:
+        apply_recoveries_to_batch(db, original_batch)
+    return recovery
+
+
+def apply_recoveries_to_batch(db: Session, batch: SettlementBatch) -> Decimal:
+    """Apply outstanding receivables only once and only against an unpaid batch."""
+    if batch.status == "PAID":
+        return ZERO
+    already = round_money(
+        db.query(func.coalesce(func.sum(RefundRecoveryAllocation.amount), 0))
+        .filter(RefundRecoveryAllocation.batch_id == batch.batch_id).scalar()
+    )
+    available = max(ZERO, round_money(to_decimal(batch.net_amount) + already))
+    applied = ZERO
+    recoveries = (
+        db.query(RefundRecovery)
+        .filter(
+            RefundRecovery.restaurant_id == batch.restaurant_id,
+            RefundRecovery.status == "OUTSTANDING",
+        )
+        .order_by(RefundRecovery.created_at.asc(), RefundRecovery.recovery_id.asc())
+        .with_for_update()
+        .all()
+    )
+    for recovery in recoveries:
+        if available <= ZERO:
+            break
+        outstanding = round_money(to_decimal(recovery.amount) - to_decimal(recovery.recovered_amount))
+        if outstanding <= ZERO:
+            recovery.status = "RECOVERED"
+            continue
+        amount = min(available, outstanding)
+        allocation = RefundRecoveryAllocation(recovery_id=recovery.recovery_id, batch_id=batch.batch_id, amount=amount)
+        db.add(allocation)
+        recovery.recovered_amount = round_money(to_decimal(recovery.recovered_amount) + amount)
+        if recovery.recovered_amount >= recovery.amount:
+            recovery.status = "RECOVERED"
+        available = round_money(available - amount)
+        applied = round_money(applied + amount)
+    if applied:
+        batch.refunds = round_money(to_decimal(batch.refunds) + applied)
+        batch.net_amount = round_money(to_decimal(batch.net_amount) - applied)
+    return applied
 
 
 def generate_settlement_batch(
@@ -162,24 +248,6 @@ def generate_settlement_batch(
 
         settlement_records.append(settlement)
 
-    # Query completed refunds for the restaurant within the period
-    refunds_total = (
-        db.query(func.coalesce(func.sum(Refund.amount), 0))
-        .join(Order, Refund.order_id == Order.order_id)
-        .filter(
-            Order.restaurant_id == restaurant_id,
-            Order.order_status == "DELIVERED",
-            Order.is_deleted.is_(False),
-            Order.financial_finalized_at.is_not(None),
-            Refund.status == "COMPLETED",
-            Refund.completed_at.is_not(None),
-            Refund.completed_at >= start_datetime,
-            Refund.completed_at < end_datetime,
-        )
-        .scalar()
-    )
-    total_refunds = round_money(to_decimal(refunds_total))
-
     # 3. Calculate daily batch totals from those records
     total_gross_sales = round_money(
         sum((to_decimal(o.subtotal) for o in eligible_orders), ZERO)
@@ -215,15 +283,14 @@ def generate_settlement_batch(
     )
     adjustments = ZERO
 
-    batch_net = round_money(
+    order_settlement_amount = round_money(
         total_gross_sales
         - total_restaurant_discounts
         - total_commission
         - total_commission_tax
         - total_other_fees
-        - total_refunds
-        + adjustments
     )
+    batch_net = round_money(order_settlement_amount + adjustments)
 
     # 6. Set settlement_date to the next day for daily T+1 cycle
     settlement_date = period_end + timedelta(days=1)
@@ -240,7 +307,7 @@ def generate_settlement_batch(
         commission=total_commission,
         commission_tax=total_commission_tax,
         other_fees=total_other_fees,
-        refunds=total_refunds,
+        refunds=ZERO,
         adjustments=adjustments,
         net_amount=batch_net,
         status=status,
@@ -256,6 +323,10 @@ def generate_settlement_batch(
             settlement_id=settlement.settlement_id,
         )
         db.add(batch_item)
+
+    # A completed refund is a receivable, not a date-filtered sales deduction.
+    # This applies any prior-period carry-forward exactly once.
+    apply_recoveries_to_batch(db, batch)
 
     db.commit()
     db.refresh(batch)
@@ -303,4 +374,3 @@ def get_settlement_history(
         ],
         "total": total,
     }
-

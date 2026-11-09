@@ -16,6 +16,7 @@ from app.models.customer import Customer, CustomerAddress
 from app.models.offer import Offer, OfferCategory, OfferItem
 from app.models.customer_feedback import CustomerFeedback
 from app.models.refund import Refund
+from app.models.refund_recovery import RefundRecovery, RefundRecoveryAllocation
 from app.models.payment import Payment
 from app.models.hotel_settlement import HotelSettlement
 from app.models.settlement_batch import SettlementBatch
@@ -29,3 +30,4 @@ from app.models.restaurant_order_settings import RestaurantOrderSettings
 from app.models.restaurant_notifications import RestaurantNotification
 from app.models.media_upload import MediaUpload
 from app.models.registration_document_upload import RegistrationDocumentUpload
+from app.models.password_reset_token import PasswordResetToken

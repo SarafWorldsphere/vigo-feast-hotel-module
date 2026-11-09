@@ -17,6 +17,7 @@ import { NotificationsPage } from '@/views/NotificationsPage';
 import { AnalyticsPage } from '@/views/AnalyticsPage';
 import { RefundsPage } from '@/views/RefundsPage';
 import { LoginPage } from '@/views/LoginPage';
+import { ForgotPasswordPage } from '@/views/ForgotPasswordPage';
 import { OwnerSignupPage } from '@/views/OwnerSignupPage';
 import { RegisterPage } from '@/views/RegisterPage';
 import { StatusScreenPage } from '@/views/StatusScreenPage';
@@ -28,7 +29,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard', subtitle: "Today's performance overview" },
   orders: { title: 'Orders', subtitle: 'Manage incoming and active orders' },
   menu: { title: 'Menu', subtitle: 'Manage your menu items and categories' },
-  delivery: { title: 'Delivery', subtitle: 'Delivery partner management' },
+  delivery: { title: 'Delivery', subtitle: 'Delivery tracking and order dispatch' },
   earnings: { title: 'Earnings', subtitle: 'Revenue and payout details' },
   refunds: { title: 'Refunds', subtitle: 'Manage customer refunds, claims, and payment reversals' },
   analytics: { title: 'Analytics', subtitle: 'Deep dive into your metrics' },
@@ -89,6 +90,7 @@ export default function HomePage() {
     if (authView === 'signup') return <OwnerSignupPage />;
     if (authView === 'wizard' || authView === 'register') return <RegisterPage />;
     if (authView === 'status') return <StatusScreenPage />;
+    if (authView === 'forgot-password') return <ForgotPasswordPage />;
     return <LoginPage />;
   }
 

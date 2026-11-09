@@ -18,6 +18,23 @@ const stageTabs: { id: DeliveryStage | 'ALL'; label: string }[] = [
   { id: 'DELIVERED', label: 'Delivered' },
 ];
 
+function isToday(dateStr?: string | null): boolean {
+  if (!dateStr) return false;
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    return trimmed === todayStr;
+  }
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export function DeliveryPage() {
   const { deliveries, loadDeliveries, addToast, isOnline } = useApp();
   const [loading, setLoading] = useState(true);
@@ -44,6 +61,13 @@ export function DeliveryPage() {
     if (activeTab === 'ALL') {
       return deliveries.filter((d) => d.stage !== 'DELIVERED');
     }
+    if (activeTab === 'DELIVERED') {
+      return deliveries.filter((d) => {
+        if (d.stage !== 'DELIVERED') return false;
+        const lastTs = d.timeline?.[d.timeline.length - 1]?.timestamp;
+        return isToday(lastTs);
+      });
+    }
     return deliveries.filter((d) => d.stage === activeTab);
   }, [deliveries, activeTab]);
 
@@ -52,7 +76,15 @@ export function DeliveryPage() {
       ALL: deliveries.filter((d) => d.stage !== 'DELIVERED').length,
     };
     deliveryStageOrder.forEach((s) => {
-      counts[s] = deliveries.filter((d) => d.stage === s).length;
+      if (s === 'DELIVERED') {
+        counts[s] = deliveries.filter((d) => {
+          if (d.stage !== 'DELIVERED') return false;
+          const lastTs = d.timeline?.[d.timeline.length - 1]?.timestamp;
+          return isToday(lastTs);
+        }).length;
+      } else {
+        counts[s] = deliveries.filter((d) => d.stage === s).length;
+      }
     });
     return counts;
   }, [deliveries]);
@@ -63,48 +95,42 @@ export function DeliveryPage() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Top Header bar with Refresh */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white">Delivery</h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Live delivery partner tracking & order dispatch</p>
+      {/* Stage tabs with Refresh */}
+      <div className="flex items-center justify-between gap-2 pb-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 scrollbar-thin">
+          {stageTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
+                activeTab === tab.id
+                  ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+              }`}
+            >
+              {tab.label}
+              {(tabCounts[tab.id] || 0) > 0 && (
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    activeTab === tab.id
+                      ? 'bg-white/20 dark:bg-gray-900/20'
+                      : 'bg-gray-200 dark:bg-gray-700'
+                  }`}
+                >
+                  {tabCounts[tab.id]}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
         <button
           onClick={handleRefresh}
           disabled={isRefreshing}
-          className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
+          className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 shrink-0"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
           Refresh
         </button>
-      </div>
-
-      {/* Stage tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-thin">
-        {stageTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
-              activeTab === tab.id
-                ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-            }`}
-          >
-            {tab.label}
-            {(tabCounts[tab.id] || 0) > 0 && (
-              <span
-                className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                  activeTab === tab.id
-                    ? 'bg-white/20 dark:bg-gray-900/20'
-                    : 'bg-gray-200 dark:bg-gray-700'
-                }`}
-              >
-                {tabCounts[tab.id]}
-              </span>
-            )}
-          </button>
-        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

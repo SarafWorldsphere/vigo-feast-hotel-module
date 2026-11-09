@@ -55,6 +55,7 @@ export interface Order {
   paymentStatus: PaymentStatus;
   paymentMethod: string;
   placedAt: string;
+  updatedAt?: string;
   prepTime?: number;
   deliveryPartner?: {
     name: string;

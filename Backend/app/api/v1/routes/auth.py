@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -19,9 +20,16 @@ from app.core.security import (
     verify_refresh_token,
 )
 from app.db.database import get_db
+from app.models.password_reset_token import PasswordResetToken
 from app.models.restaurant_owner import RestaurantOwner
 from app.models.restaurant_owner_session import RestaurantOwnerSession
 from app.schemas.auth import (
+    ForgotPasswordOtpRequest,
+    ForgotPasswordOtpRequestResponse,
+    ForgotPasswordOtpVerifyRequest,
+    ForgotPasswordOtpVerifyResponse,
+    ForgotPasswordResetRequest,
+    ForgotPasswordResetResponse,
     OwnerLoginRequest,
     OwnerLoginResponse,
     OwnerOtpRequest,
@@ -33,6 +41,7 @@ from app.schemas.auth import (
 )
 from app.services.owner_otp import verify_otp_request
 from app.services.owner_otp_service import request_owner_otp
+from app.services.password_reset_service import create_reset_token
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +78,10 @@ def create_owner_auth_session(
         db.rollback()
         raise
 
-    access_token = create_access_token(str(owner.id))
+    access_token = create_access_token(
+        str(owner.id),
+        owner.token_version
+    )
 
     response.set_cookie(
         key="refresh_token",
@@ -177,7 +189,10 @@ def register_owner(
     )
 
     # 6. Create access JWT
-    access_token = create_access_token(str(owner.id))
+    access_token = create_access_token(
+        str(owner.id),
+        owner.token_version
+    )
 
     # 7. Store JWT in HttpOnly cookie
     response.set_cookie(
@@ -254,7 +269,10 @@ def login(
     )
 
     # 6. Create access JWT and set cookie
-    access_token = create_access_token(str(owner.id))
+    access_token = create_access_token(
+        str(owner.id),
+        owner.token_version
+    )
 
     response.set_cookie(
         key="access_token",
@@ -342,7 +360,10 @@ def refresh_access_token(
             detail="Owner account is inactive or does not exist",
         )
 
-    access_token = create_access_token(str(owner.id))
+    access_token = create_access_token(
+        str(owner.id),
+        owner.token_version
+    )
 
     response.set_cookie(
         key="access_token",
@@ -556,3 +577,238 @@ def verify_login_otp(
         owner_id=str(owner.id),
         access_token=access_token,
     )
+
+
+@router.post(
+    "/forgot-password/request-otp",
+    response_model=ForgotPasswordOtpRequestResponse,
+    status_code=status.HTTP_200_OK,
+)
+def forgot_password_request_otp(
+    request: ForgotPasswordOtpRequest,
+    db: Session = Depends(get_db),
+):
+    trimmed_phone = request.phone.strip()
+
+    owner = (
+        db.query(RestaurantOwner)
+        .filter(
+            RestaurantOwner.phone == trimmed_phone,
+            RestaurantOwner.is_active.is_(True),
+            RestaurantOwner.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No registered account found with this mobile number.",
+        )
+
+    try:
+        request_id = request_owner_otp(
+            db=db,
+            phone=owner.phone,
+            purpose="FORGOT_PASSWORD",
+            language=request.language,
+            owner_id=owner.id,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        )
+
+    except Exception:
+        logger.exception("Forgot password OTP request failed")
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to send OTP. Please try again later.",
+        )
+
+    return ForgotPasswordOtpRequestResponse(
+        message="OTP sent successfully to your registered mobile number.",
+        request_id=request_id,
+    )
+
+
+@router.post(
+    "/forgot-password/verify-otp",
+    response_model=ForgotPasswordOtpVerifyResponse,
+    status_code=status.HTTP_200_OK,
+)
+def forgot_password_verify_otp(
+    request: ForgotPasswordOtpVerifyRequest,
+    db: Session = Depends(get_db),
+):
+    trimmed_phone = request.phone.strip()
+
+    owner = (
+        db.query(RestaurantOwner)
+        .filter(
+            RestaurantOwner.phone == trimmed_phone,
+            RestaurantOwner.is_active.is_(True),
+            RestaurantOwner.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP",
+        )
+
+    try:
+        valid = verify_otp_request(
+            db=db,
+            request_id=request.request_id,
+            phone=owner.phone,
+            purpose="FORGOT_PASSWORD",
+            otp=request.otp,
+        )
+
+    except Exception:
+        logger.exception("Forgot password OTP verification failed")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to verify OTP. Please try again later.",
+        )
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired OTP",
+        )
+
+    try:
+        reset_token, expires_in = create_reset_token(
+            db=db,
+            owner_id=owner.id,
+        )
+
+    except Exception:
+        db.rollback()
+        logger.exception("Reset token creation failed")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to generate password reset token.",
+        )
+
+    return ForgotPasswordOtpVerifyResponse(
+        message="OTP verified successfully",
+        reset_token=reset_token,
+        expires_in=expires_in,
+    )
+
+
+@router.post(
+    "/forgot-password/reset",
+    response_model=ForgotPasswordResetResponse,
+    status_code=status.HTTP_200_OK,
+)
+def forgot_password_reset(
+    request: ForgotPasswordResetRequest,
+    db: Session = Depends(get_db),
+):
+    # 1. Validate password confirmation.
+    if request.new_password != request.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match.",
+        )
+
+    # 2. Hash the reset token.
+    token_hash = hashlib.sha256(
+        request.reset_token.encode("utf-8")
+    ).hexdigest()
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        # 3. Lock the reset-token record.
+        reset_record = (
+            db.query(PasswordResetToken)
+            .filter(
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.used_at.is_(None),
+                PasswordResetToken.expires_at > now,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not reset_record:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, expired or already used reset token.",
+            )
+
+        # 4. Verify owner.
+        owner = (
+            db.query(RestaurantOwner)
+            .filter(
+                RestaurantOwner.id == reset_record.owner_id,
+                RestaurantOwner.is_active.is_(True),
+                RestaurantOwner.is_deleted.is_(False),
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not owner:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found.",
+            )
+
+        # 5. Hash new password.
+        try:
+            owner.password_hash = hash_password(
+                request.new_password
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            )
+
+        # 6. Invalidate access tokens.
+        owner.token_version += 1
+
+        # 7. Revoke every existing refresh session.
+        db.query(RestaurantOwnerSession).filter(
+            RestaurantOwnerSession.owner_id == owner.id,
+            RestaurantOwnerSession.revoked_at.is_(None),
+        ).update(
+            {"revoked_at": now},
+            synchronize_session=False,
+        )
+
+        # 8. Mark reset token as consumed.
+        reset_record.used_at = now
+
+        # 9. Commit everything together.
+        db.commit()
+
+        return ForgotPasswordResetResponse(
+            message="Password reset successfully. Please login again."
+        )
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        logger.exception("Password reset failed")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to reset password. Please try again later.",
+        )

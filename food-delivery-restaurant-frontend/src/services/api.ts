@@ -302,6 +302,86 @@ export async function apiRegisterOwner(payload: OwnerRegisterRequest): Promise<O
   return res;
 }
 
+export interface ForgotPasswordRequestOtpPayload {
+  phone: string;
+  language?: 'en' | 'hi' | 'te';
+}
+
+export interface ForgotPasswordRequestOtpResponse {
+  message: string;
+  request_id: string;
+}
+
+export interface ForgotPasswordVerifyOtpPayload {
+  phone: string;
+  request_id: string;
+  otp: string;
+}
+
+export interface ForgotPasswordVerifyOtpResponse {
+  message: string;
+  reset_token: string;
+  expires_in: number;
+}
+
+export interface ForgotPasswordResetPayload {
+  reset_token: string;
+  new_password: string;
+  confirm_password: string;
+}
+
+export interface ForgotPasswordResetResponse {
+  message: string;
+}
+
+/**
+ * POST /api/v1/auth/forgot-password/request-otp
+ * Step 1: Requests an SMS OTP for password reset
+ */
+export async function apiForgotPasswordRequestOtp(
+  payload: ForgotPasswordRequestOtpPayload
+): Promise<ForgotPasswordRequestOtpResponse> {
+  return request<ForgotPasswordRequestOtpResponse>(
+    '/api/v1/auth/forgot-password/request-otp',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/**
+ * POST /api/v1/auth/forgot-password/verify-otp
+ * Step 2: Verifies the 6-digit OTP and retrieves a temporary password reset token
+ */
+export async function apiForgotPasswordVerifyOtp(
+  payload: ForgotPasswordVerifyOtpPayload
+): Promise<ForgotPasswordVerifyOtpResponse> {
+  return request<ForgotPasswordVerifyOtpResponse>(
+    '/api/v1/auth/forgot-password/verify-otp',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/**
+ * POST /api/v1/auth/forgot-password/reset
+ * Step 3: Resets the password using the verified reset token
+ */
+export async function apiForgotPasswordReset(
+  payload: ForgotPasswordResetPayload
+): Promise<ForgotPasswordResetResponse> {
+  return request<ForgotPasswordResetResponse>(
+    '/api/v1/auth/forgot-password/reset',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
 /**
  * POST /api/v1/auth/login
  * Verifies email/password and sets access_token + refresh_token cookies
@@ -534,6 +614,31 @@ export async function apiGetCategories(): Promise<CategoryResponse[]> {
   });
 }
 
+/**
+ * DELETE /api/v1/menu/categories/{category_id}
+ * Deletes a category and its menu items for the authenticated owner's restaurant
+ */
+export interface DeleteCategoryResponse {
+  message: string;
+  id: string;
+  items_deleted?: number;
+  images_deleted?: number;
+  images_skipped?: number;
+  image_cleanup_pending?: boolean;
+  images_pending?: number;
+}
+
+export async function apiDeleteCategory(
+  categoryId: string
+): Promise<DeleteCategoryResponse> {
+  return request<DeleteCategoryResponse>(
+    `/api/v1/menu/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
+
 export type MenuImageContentType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 export interface MenuImageUploadUrlRequest {
@@ -709,6 +814,62 @@ export async function apiUpdateMenuItemAvailability(
   });
 }
 
+/** PATCH /api/v1/menu/items/{item_id}/image */
+export async function apiUpdateMenuItemImage(
+  itemId: string,
+  objectKey: string
+): Promise<MenuItemResponse> {
+  return request<MenuItemResponse>(
+    `/api/v1/menu/items/${encodeURIComponent(itemId)}/image`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        object_key: objectKey,
+      }),
+    }
+  );
+}
+
+export interface MenuItemUpdateRequest {
+  category_id?: string;
+  category_name?: string;
+  name?: string;
+  description?: string | null;
+  base_price?: number;
+  food_type?: 'VEG' | 'NON_VEG' | 'EGG';
+  preparation_time_minutes?: number;
+}
+
+/** PATCH /api/v1/menu/items/{item_id} */
+export async function apiUpdateMenuItem(
+  itemId: string,
+  payload: MenuItemUpdateRequest
+): Promise<MenuItemResponse> {
+  return request<MenuItemResponse>(
+    `/api/v1/menu/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function apiDeleteMenuItem(
+  itemId: string
+): Promise<{
+  message: string;
+  item_id: string;
+  image_deleted: boolean;
+  image_cleanup_pending: boolean;
+}> {
+  return request(
+    `/api/v1/menu/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
+
 export interface BackendOrderItem {
   order_item_id: number;
   menu_item_id: string;
@@ -795,6 +956,7 @@ export function mapBackendOrderToFrontend(
     paymentStatus: 'PENDING',
     paymentMethod: 'Payment details unavailable',
     placedAt: bo.created_at || new Date().toISOString(),
+    updatedAt: bo.updated_at || bo.created_at || new Date().toISOString(),
     prepTime: undefined,
     deliveryAddress: delivery?.customer?.address ?? undefined,
     deliveryPartner: delivery?.delivery_partner
@@ -1075,6 +1237,8 @@ export function mapBackendOfferToFrontend(
     applicableItems: Array.isArray(bo.menu_item_ids)
       ? bo.menu_item_ids.map((id) => (itemNameMap && itemNameMap[String(id)]) || String(id))
       : [],
+    categoryIds: Array.isArray(bo.category_ids) ? bo.category_ids.map(String) : [],
+    menuItemIds: Array.isArray(bo.menu_item_ids) ? bo.menu_item_ids.map(String) : [],
     usageCount: bo.times_used ?? 0,
     totalDiscountGiven: Number(bo.discount_given) || 0,
     status,

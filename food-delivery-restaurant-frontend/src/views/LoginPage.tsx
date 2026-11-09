@@ -140,21 +140,8 @@ export function LoginPage() {
     }
   };
 
-  const handleForgotPassword = async () => {
-    try {
-      await apiRefreshToken();
-      addToast({
-        type: 'info',
-        title: 'Password Reset',
-        message: 'A password reset link has been dispatched to your email.',
-      });
-    } catch {
-      addToast({
-        type: 'error',
-        title: 'Error',
-        message: 'Could not process password reset at this time.',
-      });
-    }
+  const handleForgotPassword = () => {
+    setAuthView('forgot-password');
   };
 
   const resetOtp = () => {
