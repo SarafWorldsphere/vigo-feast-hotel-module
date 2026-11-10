@@ -17,7 +17,6 @@ from app.models.restaurant import Restaurant
 from app.models.restaurant_owner import RestaurantOwner
 from app.schemas.refunds import RefundCreate
 from app.services.refunds import create_refund
-from app.services.razorpay_service import RazorpayAmbiguousError, RazorpayGatewayError
 
 
 class RefundServiceTests(unittest.TestCase):
@@ -141,8 +140,8 @@ class RefundServiceTests(unittest.TestCase):
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
 
-    def test_demo_mode_disabled_rejects_refund_creation(self):
-        """When ALLOW_DEMO_REFUND_CREATION is False (default), demo payments must be rejected with 409."""
+    def test_owner_request_is_pending_without_gateway_execution(self):
+        """Owner submissions are always requests; this module never calls Razorpay."""
         payload = RefundCreate(
             amount=Decimal("150.00"),
             reason="Missing item compensation",
@@ -150,21 +149,11 @@ class RefundServiceTests(unittest.TestCase):
             idempotency_key=uuid4(),
         )
 
-        with patch("app.core.config.ALLOW_DEMO_REFUND_CREATION", False):
-            with self.assertRaises(HTTPException) as ctx:
-                create_refund(
-                    db=self.db,
-                    restaurant_id=self.restaurant_id,
-                    owner_id=self.owner_id,
-                    complaint_id=self.resolved_complaint.complaint_id,
-                    payload=payload,
-                )
-            self.assertEqual(ctx.exception.status_code, 409)
-            self.assertIn("Refund creation is disabled for demo payments", ctx.exception.detail)
-
-        # Verify zero refunds created in database
-        count = self.db.query(Refund).count()
-        self.assertEqual(count, 0)
+        refund = create_refund(self.db, self.restaurant_id, self.owner_id, self.resolved_complaint.complaint_id, payload)
+        self.assertEqual(refund.status, "PENDING")
+        self.assertEqual(refund.restaurant_id, self.restaurant_id)
+        self.assertEqual(refund.payment_id, self.demo_payment.payment_id)
+        self.assertIsNone(refund.execution_reference)
 
     def test_demo_mode_enabled_creates_pending_refund_without_payout(self):
         """When ALLOW_DEMO_REFUND_CREATION is True, a PENDING refund record is created without execution."""
@@ -331,38 +320,15 @@ class RefundServiceTests(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 422)
             self.assertIn("Refund exceeds the remaining refundable balance", ctx.exception.detail)
 
-    def test_razorpay_partial_refund_is_processing_until_webhook(self):
+    def test_razorpay_payment_request_remains_pending_for_admin(self):
         self.demo_payment.gateway_name = "RAZORPAY"
         self.demo_payment.method = "UPI"
         self.demo_payment.gateway_payment_ref = "pay_test_123"
         self.db.commit()
         payload = RefundCreate(amount=Decimal("125.50"), reason="Missing item", destination_method="ORIGINAL_PAYMENT_METHOD", idempotency_key=uuid4())
-        with patch("app.services.refunds.razorpay_service.create_refund", return_value={"id": "rfnd_test_123", "status": "pending"}):
-            refund = create_refund(self.db, self.restaurant_id, self.owner_id, self.resolved_complaint.complaint_id, payload)
-        self.assertEqual(refund.status, "PROCESSING")
-        self.assertEqual(refund.execution_reference, "rfnd_test_123")
-
-    def test_razorpay_timeout_stays_processing_for_reconciliation(self):
-        self.demo_payment.gateway_name = "RAZORPAY"
-        self.demo_payment.method = "UPI"
-        self.demo_payment.gateway_payment_ref = "pay_test_123"
-        self.db.commit()
-        payload = RefundCreate(amount=Decimal("125.00"), reason="Missing item", destination_method="ORIGINAL_PAYMENT_METHOD", idempotency_key=uuid4())
-        with patch("app.services.refunds.razorpay_service.create_refund", side_effect=RazorpayAmbiguousError("timeout")):
-            refund = create_refund(self.db, self.restaurant_id, self.owner_id, self.resolved_complaint.complaint_id, payload)
-        self.assertEqual(refund.status, "PROCESSING")
-        self.assertIsNone(refund.completed_at)
-
-    def test_confirmed_gateway_rejection_is_failed(self):
-        self.demo_payment.gateway_name = "RAZORPAY"
-        self.demo_payment.method = "UPI"
-        self.demo_payment.gateway_payment_ref = "pay_test_123"
-        self.db.commit()
-        payload = RefundCreate(amount=Decimal("125.00"), reason="Missing item", destination_method="ORIGINAL_PAYMENT_METHOD", idempotency_key=uuid4())
-        with patch("app.services.refunds.razorpay_service.create_refund", side_effect=RazorpayGatewayError("insufficient gateway balance")):
-            refund = create_refund(self.db, self.restaurant_id, self.owner_id, self.resolved_complaint.complaint_id, payload)
-        self.assertEqual(refund.status, "FAILED")
-        self.assertIn("insufficient gateway balance", refund.failure_reason)
+        refund = create_refund(self.db, self.restaurant_id, self.owner_id, self.resolved_complaint.complaint_id, payload)
+        self.assertEqual(refund.status, "PENDING")
+        self.assertIsNone(refund.execution_reference)
 
 
 if __name__ == "__main__":

@@ -1,18 +1,16 @@
 
+import uuid
+
 from sqlalchemy import (
     BigInteger,
-    Boolean,
     Column,
-    Date,
     DateTime,
+    Float,
     ForeignKey,
-    Numeric,
     String,
-    Time,
     func,
 )
-from sqlalchemy.dialects.postgresql import INET, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 
 from app.db.database import Base
 
@@ -20,53 +18,34 @@ from app.db.database import Base
 class OrderTracking(Base):
     __tablename__ = "vgf_order_tracking"
 
-    tracking_id = Column(
-        BigInteger,
+    id = Column(
+        String,
         primary_key=True,
-        autoincrement=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
     )
 
     order_id = Column(
-        BigInteger,
-        ForeignKey("vgf_orders.order_id", ondelete="CASCADE"),
+        String,
+        ForeignKey("vgf_orders.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     rider_id = Column(BigInteger, nullable=True, index=True)
 
-    latitude = Column(Numeric(10, 8), nullable=True)
-    longitude = Column(Numeric(11, 8), nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
-    event_type = Column(String(100), nullable=False)
+    status_update = Column(String, nullable=False)
 
-    event_time = Column(
+    recorded_at = Column(
         DateTime(timezone=True),
-        nullable=False,
+        nullable=True,
         server_default=func.now(),
     )
 
-    franchisee_id = Column(UUID(as_uuid=True), nullable=True)
-
-    added_by = Column(String(100), nullable=True)
-    added_date = Column(
-        Date,
-        server_default=func.current_date(),
-        nullable=True,
-    )
-    added_time = Column(
-        Time,
-        server_default=func.current_time(),
-        nullable=True,
-    )
-    added_ip = Column(INET, nullable=True)
-
-    last_updated_by = Column(String(100), nullable=True)
-    last_updated_date = Column(Date, nullable=True)
-    last_updated_time = Column(Time, nullable=True)
-    last_updated_ip = Column(INET, nullable=True)
-
-    is_active = Column(Boolean, default=True)
-    is_deleted = Column(Boolean, default=False)
+    event_type = synonym("status_update")
+    event_time = synonym("recorded_at")
 
     order = relationship("Order", back_populates="tracking_events")

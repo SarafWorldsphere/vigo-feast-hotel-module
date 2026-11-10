@@ -370,6 +370,15 @@ export function RefundDrawer() {
             </div>
           )}
 
+          {refund.status === 'REJECTED' && (
+            <div className="card p-4 border-l-4 border-l-red-500 bg-red-50/30 dark:bg-red-500/5">
+              <h3 className="text-xs font-semibold text-red-700 dark:text-red-300 uppercase tracking-wider">Platform rejection reason</h3>
+              <p className="mt-2 text-xs text-red-700 dark:text-red-200">
+                {refund.rejection_reason || 'The platform admin rejected this refund request.'}
+              </p>
+            </div>
+          )}
+
           {/* Items Refunded */}
           {refund.items_refunded && refund.items_refunded.length > 0 && (
             <div className="card p-4">

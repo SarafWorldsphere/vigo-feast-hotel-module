@@ -10,6 +10,7 @@ from app.models.menu_item import MenuItem
 from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.order_tracking import OrderTracking
+from app.services.s3_service import resolve_media_url
 
 REPORTING_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
@@ -170,9 +171,9 @@ def get_analytics_overview(
                 func.min(
                     case(
                         (
-                            OrderTracking.event_type
+                            OrderTracking.status_update
                             == "START_PREPARING",
-                            OrderTracking.event_time,
+                            OrderTracking.recorded_at,
                         ),
                         else_=None,
                     )
@@ -180,9 +181,9 @@ def get_analytics_overview(
                 func.min(
                     case(
                         (
-                            OrderTracking.event_type
+                            OrderTracking.status_update
                             == "PREPARATION_COMPLETED",
-                            OrderTracking.event_time,
+                            OrderTracking.recorded_at,
                         ),
                         else_=None,
                     )
@@ -190,16 +191,14 @@ def get_analytics_overview(
             )
             .join(
                 Order,
-                Order.order_id == OrderTracking.order_id,
+                Order.id == OrderTracking.order_id,
             )
             .filter(
                 Order.restaurant_id == restaurant_id,
                 Order.is_deleted.is_(False),
                 Order.created_at >= period_start,
                 Order.created_at < period_end,
-                OrderTracking.is_active.is_(True),
-                OrderTracking.is_deleted.is_(False),
-                OrderTracking.event_type.in_(
+                OrderTracking.status_update.in_(
                     ("START_PREPARING", "PREPARATION_COMPLETED")
                 ),
             )
@@ -209,10 +208,22 @@ def get_analytics_overview(
 
         durations = []
 
+        def _parse_event_ts(value):
+            if isinstance(value, str):
+                return datetime.fromisoformat(value)
+            return value
+
         for row in event_rows:
-            if row.started_at and row.completed_at:
+            started_at = _parse_event_ts(row.started_at)
+            completed_at = _parse_event_ts(row.completed_at)
+
+            if started_at and completed_at:
+                if (started_at.tzinfo is None) != (completed_at.tzinfo is None):
+                    started_at = started_at.replace(tzinfo=None)
+                    completed_at = completed_at.replace(tzinfo=None)
+
                 seconds = (
-                    row.completed_at - row.started_at
+                    completed_at - started_at
                 ).total_seconds()
 
                 if seconds >= 0:
@@ -518,7 +529,7 @@ def get_top_selling_items(
             {
                 "menu_item_id": str(row.menu_item_id),
                 "name": row.name,
-                "image_url": row.image_url,
+                "image_url": resolve_media_url(row.image_url),
                 "category_name": row.category_name,
                 "quantity_sold": int(row.quantity_sold),
                 "order_count": int(row.order_count),
@@ -595,7 +606,7 @@ def get_highest_revenue_items(
             {
                 "menu_item_id": str(row.menu_item_id),
                 "name": row.name,
-                "image_url": row.image_url,
+                "image_url": resolve_media_url(row.image_url),
                 "category_name": row.category_name,
                 "quantity_sold": int(row.quantity_sold),
                 "order_count": int(row.order_count),

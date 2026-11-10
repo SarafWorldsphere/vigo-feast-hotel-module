@@ -52,7 +52,7 @@ import {
   apiGetComplaints,
   apiUpdateComplaintStatus,
   apiGetRefunds,
-  apiCreateComplaintRefund,
+  apiSubmitRefundRequest,
   apiGetOrderSettings,
   apiPauseOrders,
   apiResumeOrders,
@@ -457,6 +457,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updated_at: refund.updated_at,
         completed_at: refund.completed_at,
         failed_reason: refund.failure_reason || undefined,
+        rejection_reason: refund.rejection_reason || undefined,
         complaint_id: refund.complaint_id,
         complaintId: refund.complaint_id
           ? String(refund.complaint_id)
@@ -466,7 +467,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRefunds(mapped);
     } catch (err) {
       console.error('Failed to load refunds:', err);
-      throw err;
     }
   }, []);
 
@@ -1040,7 +1040,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       let categoryId = updates.category_id;
       if (!categoryId && updates.category) {
-        const found = categories.find((c) => c.name.toLowerCase() === updates.category!.toLowerCase());
+        const found = categories.find(
+          (c) => c.name.trim().toLowerCase() === updates.category!.trim().toLowerCase()
+        );
         if (found) categoryId = found.id;
       }
 
@@ -1053,10 +1055,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (updates.foodType !== undefined) payload.food_type = updates.foodType;
       if (updates.prepTime !== undefined) payload.preparation_time_minutes = updates.prepTime;
 
+      // Support local optimistic-only updates (e.g. toggling availability before dedicated availability call)
+      if (Object.keys(payload).length === 0) {
+        setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+        return;
+      }
+
       const response = await apiUpdateMenuItem(id, payload);
 
       const catMap = new Map(categories.map((c) => [c.id, c.name]));
-      const resolvedCategory = updates.category || catMap.get(response.category_id) || 'Uncategorized';
+      const resolvedCategory = catMap.get(response.category_id) || updates.category || 'Uncategorized';
 
       setMenuItems((prev) =>
         prev.map((m) =>
@@ -1079,7 +1087,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       );
     } catch (err) {
       console.error('Failed to update menu item in database:', err);
-      setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
       throw err;
     }
   }, [categories]);
@@ -1202,6 +1209,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const matchedCategory = categories.find((c) => c.id === res.category_id);
       const newItem: MenuItem = {
         id: res.id,
+        category_id: res.category_id,
         name: res.name,
         description: res.description || '',
         price: Number(res.base_price),
@@ -1220,6 +1228,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [categories]
   );
+
+  // Keep category item counts synchronized when items are added, edited, or deleted
+  useEffect(() => {
+    setCategories((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((cat) => {
+        const count = menuItems.filter(
+          (item) =>
+            (item.category_id && item.category_id === cat.id) ||
+            item.category.trim().toLowerCase() === cat.name.trim().toLowerCase()
+        ).length;
+        if (count !== cat.itemCount) {
+          changed = true;
+          return { ...cat, itemCount: count };
+        }
+        return cat;
+      });
+      return changed ? next : prev;
+    });
+  }, [menuItems]);
 
   const categoriesRef = useRef<Category[]>(categories);
   categoriesRef.current = categories;
@@ -1316,6 +1345,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const createRefund = useCallback(
     async ({
+      orderId,
       amount,
       reason,
       reasonNote,
@@ -1337,7 +1367,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .join(' — ')
         .slice(0, 255);
 
-      const res = await apiCreateComplaintRefund(Number(complaintId), {
+      const res = await apiSubmitRefundRequest({
+        order_id: Number(String(orderId).replace(/\D/g, '')),
+        complaint_id: Number(complaintId),
         amount,
         reason: combinedReason,
         destination_method: 'ORIGINAL_PAYMENT_METHOD',

@@ -29,9 +29,10 @@ from app.services.s3_service import (
     delete_object,
     delete_s3_object,
     extract_s3_key,
+    generate_public_url,
     generate_upload_url,
-    generate_view_url,
     get_object_metadata,
+    resolve_media_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ def confirm_menu_image_upload(
     return {
         "message": "Image upload confirmed successfully",
         "object_key": upload.object_key,
+        "image_url": generate_public_url(upload.object_key),
         "media_type": upload.media_type,
         "content_type": upload.content_type,
         "file_size_bytes": upload.file_size_bytes,
@@ -441,7 +443,7 @@ def delete_category(
 def build_menu_item_response(item: MenuItem) -> dict:
     data = MenuItemResponse.model_validate(item).model_dump()
     data["image_url"] = (
-        generate_view_url(item.image_key)
+        resolve_media_url(item.image_key)
         if item.image_key
         else None
     )

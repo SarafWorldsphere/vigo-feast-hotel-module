@@ -12,6 +12,10 @@ ALLOW_DEMO_REFUND_CREATION = os.getenv("ALLOW_DEMO_REFUND_CREATION", "false").lo
 
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "vigofeast-media")
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-2")
+AWS_S3_PUBLIC_BASE_URL = (
+    os.getenv("AWS_S3_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    or f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com"
+)
 S3_PRESIGNED_URL_EXPIRE_SECONDS = int(
     os.getenv("S3_PRESIGNED_URL_EXPIRE_SECONDS", "300")
 )

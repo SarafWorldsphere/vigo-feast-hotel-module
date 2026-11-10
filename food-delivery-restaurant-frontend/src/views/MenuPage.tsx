@@ -11,6 +11,7 @@ import {
   MenuItemCreateRequest,
   apiCreateMenuImageUploadUrl,
   apiConfirmMenuImageUpload,
+  apiUpdateMenuItemImage,
   uploadFileToPresignedUrl,
   MenuImageContentType,
 } from '@/services/api';
@@ -146,7 +147,13 @@ export function MenuPage() {
     } else if (activeCategory === '__offers__') {
       matchesCategory = offers.some(off => doesOfferApplyToItem(item, off, categories));
     } else {
-      matchesCategory = item.category === activeCategory;
+      const selectedCat = categories.find(
+        (c) => c.name.trim().toLowerCase() === activeCategory.trim().toLowerCase()
+      );
+      matchesCategory = selectedCat
+        ? Boolean(item.category_id && item.category_id === selectedCat.id) ||
+          item.category.trim().toLowerCase() === selectedCat.name.trim().toLowerCase()
+        : item.category.trim().toLowerCase() === activeCategory.trim().toLowerCase();
     }
     return matchesSearch && matchesCategory;
   });
@@ -501,12 +508,27 @@ export function MenuPage() {
       {/* Edit modal */}
       {editingItem && (
         <ItemEditorModal
+          key={editingItem.id}
           item={editingItem}
+          categories={categories}
           onClose={() => setEditingItem(null)}
-          onSave={(updates) => {
-            updateMenuItem(editingItem.id, updates);
+          onSave={async (updates) => {
+            await updateMenuItem(editingItem.id, updates);
+            if (
+              updates.availability &&
+              updates.availability !== editingItem.availability
+            ) {
+              await updateMenuItemAvailability(
+                editingItem.id,
+                updates.availability
+              );
+            }
             setEditingItem(null);
-            addToast({ type: 'success', title: 'Item updated', message: editingItem.name });
+            addToast({
+              type: 'success',
+              title: 'Item updated',
+              message: updates.name || editingItem.name,
+            });
           }}
         />
       )}
@@ -516,7 +538,11 @@ export function MenuPage() {
         <ItemEditorModal
           mode="add"
           categories={categories}
-          defaultCategory={activeCategory === 'all' ? (categories[0]?.name ?? 'Main Course') : activeCategory}
+          defaultCategory={
+            activeCategory === 'all' || activeCategory === '__offers__'
+              ? (categories[0]?.name ?? 'Main Course')
+              : activeCategory
+          }
           onClose={() => setIsAddingItem(false)}
           onSave={handleAddItem}
         />
@@ -676,16 +702,84 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
   onClose: () => void;
   onSave?: (updates: Partial<MenuItem> | MenuItem) => Promise<void> | void;
 }) {
-  const { createMenuItem, loadCategories, addToast, offers } = useApp();
-  const itemOffers = item ? offers.filter((off) => doesOfferApplyToItem(item, off, categories)) : [];
+  const { createMenuItem, loadCategories, addToast, offers, categories: contextCategories } = useApp();
+  const availableCategories = categories.length > 0 ? categories : contextCategories;
+  const itemOffers = item ? offers.filter((off) => doesOfferApplyToItem(item, off, availableCategories)) : [];
   const isAdd = mode === 'add';
+
+  const currentCategoryName = useMemo(() => {
+    if (item) {
+      if (item.category_id) {
+        const matchedById = availableCategories.find(
+          (c) => String(c.id).toLowerCase() === String(item.category_id).toLowerCase()
+        );
+        if (matchedById) return matchedById.name;
+      }
+      if (item.category) {
+        const matchedByName = availableCategories.find(
+          (c) => c.name.trim().toLowerCase() === item.category.trim().toLowerCase()
+        );
+        if (matchedByName) return matchedByName.name;
+        return item.category;
+      }
+    }
+    if (defaultCategory) {
+      const matchedDefault = availableCategories.find(
+        (c) => c.name.trim().toLowerCase() === defaultCategory.trim().toLowerCase()
+      );
+      if (matchedDefault) return matchedDefault.name;
+      return defaultCategory;
+    }
+    return availableCategories[0]?.name || 'Main Course';
+  }, [item, defaultCategory, availableCategories]);
+
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [price, setPrice] = useState(item?.price !== undefined ? String(item.price) : '');
   const [prepTime, setPrepTime] = useState(item?.prepTime !== undefined ? String(item.prepTime) : '');
   const [availability, setAvailability] = useState<ItemAvailability>(item?.availability ?? 'AVAILABLE');
-  const [category, setCategory] = useState(item?.category ?? defaultCategory ?? (categories[0]?.name || 'Main Course'));
+  const [category, setCategory] = useState(currentCategoryName);
   const [image, setImage] = useState(item?.image_url || item?.image || '');
+
+  useEffect(() => {
+    if ((!category || category === 'Uncategorized') && currentCategoryName && currentCategoryName !== 'Uncategorized') {
+      setCategory(currentCategoryName);
+    }
+  }, [category, currentCategoryName]);
+
+  const dropdownCategories = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+    const currentLower = currentCategoryName.trim().toLowerCase();
+
+    const matchedCurrent = availableCategories.find(
+      (c) =>
+        (item?.category_id &&
+          String(c.id).toLowerCase() === String(item.category_id).toLowerCase()) ||
+        c.name.trim().toLowerCase() === currentLower
+    );
+
+    if (matchedCurrent) {
+      result.push({ id: matchedCurrent.id, name: matchedCurrent.name });
+      seen.add(matchedCurrent.name.trim().toLowerCase());
+    } else if (currentCategoryName.trim()) {
+      result.push({
+        id: item?.category_id || '__current__',
+        name: currentCategoryName,
+      });
+      seen.add(currentLower);
+    }
+
+    for (const c of availableCategories) {
+      const lower = c.name.trim().toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        result.push({ id: c.id, name: c.name });
+      }
+    }
+
+    return result;
+  }, [availableCategories, currentCategoryName, item?.category_id]);
 
   const [foodType, setFoodType] = useState<'VEG' | 'NON_VEG' | 'EGG'>(item?.foodType ?? 'VEG');
   const [allergens, setAllergens] = useState<string[]>(item?.allergens ?? []);
@@ -880,10 +974,10 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
 
       // Step D: Create or Update menu item
       setUploadStage('saving');
+      const matchedCat = availableCategories.find(
+        (c) => c.name.trim().toLowerCase() === category.trim().toLowerCase()
+      );
       if (isAdd) {
-        const matchedCat = categories.find(
-          (c) => c.name.toLowerCase() === category.toLowerCase()
-        );
         const createdItem = await createMenuItem({
           category_id: matchedCat?.id,
           category_name: matchedCat ? undefined : category,
@@ -903,16 +997,22 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
           addToast({ type: 'success', title: 'Menu item created', message: createdItem.name });
         }
       } else {
+        let resolvedImageUrl = image && !image.startsWith('blob:') ? image : undefined;
+        if (activeImageKey && item?.id) {
+          const imgRes = await apiUpdateMenuItemImage(item.id, activeImageKey);
+          resolvedImageUrl = imgRes.image_url || resolvedImageUrl;
+        }
         if (onSave) {
           await onSave({
             name: trimmedName,
             description: description.trim(),
             price: parsedPrice,
-            category,
+            category: matchedCat?.name || category,
+            category_id: matchedCat?.id,
             prepTime: parsedPrepTime,
             availability,
-            image: activeImageKey || image || 'placeholder',
-            image_url: activeImageKey || image || undefined,
+            image: resolvedImageUrl || 'placeholder',
+            image_url: resolvedImageUrl,
             foodType,
             allergens,
             variants,
@@ -1098,18 +1198,13 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
               className="input mt-1"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
+              disabled={isSubmitting}
             >
-              {categories.length > 0 ? (
-                categories.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
-                  </option>
-                ))
-              ) : (
-                <option value={category || 'Main Course'}>
-                  {category || 'Main Course'}
+              {dropdownCategories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
                 </option>
-              )}
+              ))}
             </select>
           </div>
           <div>

@@ -14,7 +14,7 @@ from app.schemas.restaurant import (
     RestaurantProfileUpdate,
     RestaurantRatingResponse,
 )
-from app.services.s3_service import generate_view_url
+from app.services.s3_service import resolve_media_url
 
 
 
@@ -104,17 +104,8 @@ def get_restaurant_profile(
         "phone": result.phone,
         "email": result.email,
         "images": {
-            "logo_url": (
-                generate_view_url(result.logo_url)
-                if result.logo_url and result.logo_url.startswith("restaurants/")
-                else result.logo_url
-            ),
-            "cover_image_url": (
-                generate_view_url(result.cover_image_url)
-                if result.cover_image_url
-                and result.cover_image_url.startswith("restaurants/")
-                else result.cover_image_url
-            ),
+            "logo_url": resolve_media_url(result.logo_url),
+            "cover_image_url": resolve_media_url(result.cover_image_url),
         },
         "address": {
             "address_line1": result.address_line1,

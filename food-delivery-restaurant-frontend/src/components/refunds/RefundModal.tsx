@@ -9,7 +9,7 @@ import {
   X, Search, AlertCircle, RotateCcw,
   Receipt, CheckCircle2, ChevronDown,
 } from 'lucide-react';
-import { apiCreateComplaintRefund } from '@/services/api';
+import { apiSubmitRefundRequest } from '@/services/api';
 
 const REASON_OPTIONS = [
   'Missing item',
@@ -520,19 +520,17 @@ export function RefundModal() {
     setError(null);
 
     try {
-      const destination = isCodOrder ? destinationMethod : 'ORIGINAL_PAYMENT_METHOD';
-      const result = await apiCreateComplaintRefund(
-        Number(selectedComplaintId),
-        {
+      const result = await apiSubmitRefundRequest({
+          order_id: Number(String(selectedOrder.id).replace(/\D/g, '')),
+          complaint_id: Number(selectedComplaintId),
           amount: Number(numericAmount.toFixed(2)),
           reason: [reason.trim(), reasonNote.trim()]
             .filter(Boolean)
             .join(' — ')
             .slice(0, 255),
-          destination_method: destination,
+          destination_method: 'ORIGINAL_PAYMENT_METHOD',
           idempotency_key: crypto.randomUUID(),
-        }
-      );
+      });
 
       await loadRefunds();
       console.info('Refund record created:', result);
@@ -573,13 +571,11 @@ export function RefundModal() {
               <AnimatedCheckmark size="lg" variant="emerald" />
             </div>
             <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-1">
-              {isDemoPayment ? 'Pending Development Refund Created' : 'Refund Record Created'}
+              Refund Request Submitted
             </h3>
 
             <p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm mb-4">
-              {isDemoPayment
-                ? 'A PENDING refund request was recorded for testing against demo payment data. No money has been transferred or deducted.'
-                : 'The refund record was created successfully. Payment execution has not been confirmed.'}
+              Refund request submitted successfully. Awaiting platform admin processing.
             </p>
           </div>
         ) : (

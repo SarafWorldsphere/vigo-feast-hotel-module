@@ -1,19 +1,21 @@
-
 import logging
+from urllib.parse import quote, unquote, urlparse
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from urllib.parse import unquote, urlparse
-
 from app.core.config import (
     AWS_REGION,
     AWS_S3_BUCKET,
+    AWS_S3_PUBLIC_BASE_URL,
     S3_PRESIGNED_URL_EXPIRE_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
+
+PUBLIC_MEDIA_PREFIXES = ("restaurants/",)
+PRIVATE_MEDIA_PREFIXES = ("registration-documents/",)
 
 _s3 = boto3.client(
     "s3",
@@ -24,6 +26,31 @@ _s3 = boto3.client(
         s3={"addressing_style": "virtual"},
     ),
 )
+
+
+def _is_bucket_url(parsed) -> bool:
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+
+    bucket_lower = AWS_S3_BUCKET.lower()
+    public_host = (urlparse(AWS_S3_PUBLIC_BASE_URL).hostname or "").lower()
+    if public_host and host == public_host:
+        return True
+
+    # Virtual-hosted S3 URLs: <bucket>.s3.<region>.amazonaws.com or <bucket>.s3.amazonaws.com
+    if host.startswith(f"{bucket_lower}.s3") and host.endswith(".amazonaws.com"):
+        return True
+
+    # Path-style S3 URLs: s3.<region>.amazonaws.com/<bucket>/... or s3.amazonaws.com/<bucket>/...
+    path = unquote(parsed.path).lstrip("/")
+    if (
+        host == "s3.amazonaws.com"
+        or (host.startswith("s3.") and host.endswith(".amazonaws.com"))
+    ) and path.startswith(f"{AWS_S3_BUCKET}/"):
+        return True
+
+    return False
 
 
 def extract_s3_key(value: str | None) -> str | None:
@@ -47,12 +74,13 @@ def extract_s3_key(value: str | None) -> str | None:
         if without_scheme.startswith(f"{AWS_S3_BUCKET}/"):
             val = without_scheme[len(AWS_S3_BUCKET) + 1 :]
         else:
-            parts = without_scheme.split("/", 1)
-            val = parts[1] if len(parts) > 1 else parts[0]
+            return None
 
-    # Handle http:// and https:// URLs
+    # Handle http:// and https:// URLs belonging to our S3 bucket / public media domain
     elif val.startswith("http://") or val.startswith("https://"):
         parsed = urlparse(val)
+        if not _is_bucket_url(parsed):
+            return None
         path = unquote(parsed.path).lstrip("/")
         # If path-style URL (e.g. /bucket-name/restaurants/...)
         if path.startswith(f"{AWS_S3_BUCKET}/"):
@@ -68,10 +96,57 @@ def extract_s3_key(value: str | None) -> str | None:
     val = val.strip("/")
 
     # Only return keys that belong to this application's namespaces
-    if val.startswith("restaurants/") or val.startswith("registration-documents/"):
+    if val.startswith(PUBLIC_MEDIA_PREFIXES) or val.startswith(PRIVATE_MEDIA_PREFIXES):
         return val
 
     return None
+
+
+def is_public_media_key(object_key: str | None) -> bool:
+    clean_key = extract_s3_key(object_key)
+    return bool(clean_key and clean_key.startswith(PUBLIC_MEDIA_PREFIXES))
+
+
+def generate_public_url(object_key: str) -> str:
+    """
+    Build the permanent direct public URL for objects under public prefixes (restaurants/*).
+    Raises ValueError for private prefixes such as registration-documents/*.
+    """
+    clean_key = extract_s3_key(object_key)
+    if not clean_key or not clean_key.startswith(PUBLIC_MEDIA_PREFIXES):
+        raise ValueError(
+            f"Object key is not eligible for public URL access: {object_key!r}"
+        )
+
+    base_url = AWS_S3_PUBLIC_BASE_URL.rstrip("/")
+    encoded_key = quote(clean_key, safe="/")
+    return f"{base_url}/{encoded_key}"
+
+
+def resolve_media_url(value: str | None) -> str | None:
+    """
+    Resolve a stored image key or URL for public storefront/menu responses:
+    - 'restaurants/...' keys (including legacy S3 URLs/URIs) -> permanent direct S3 public URL
+    - 'registration-documents/...' -> None (never expose private documents as public URLs)
+    - External URLs / sample keys (e.g., Pexels URL, 'paneer') -> returned unchanged
+    """
+    if not value or not isinstance(value, str):
+        return None
+    val = value.strip()
+    if not val:
+        return None
+
+    clean_key = extract_s3_key(val)
+    if clean_key:
+        if clean_key.startswith(PUBLIC_MEDIA_PREFIXES):
+            return generate_public_url(clean_key)
+        logger.warning(
+            "Blocked public URL resolution for private media key: %s",
+            clean_key,
+        )
+        return None
+
+    return val
 
 
 def generate_upload_url(
@@ -92,6 +167,8 @@ def generate_upload_url(
 
 def generate_view_url(object_key: str) -> str:
     clean_key = extract_s3_key(object_key) or object_key
+    if clean_key.startswith(PUBLIC_MEDIA_PREFIXES):
+        return generate_public_url(clean_key)
     return _s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
@@ -174,4 +251,3 @@ def delete_s3_object(object_key: str) -> bool:
     except ClientError:
         logger.exception("Failed to delete S3 object: %s", clean_key)
         raise
-

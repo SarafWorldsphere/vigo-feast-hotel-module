@@ -11,6 +11,17 @@ import {
   UpdateOfferPayload,
 } from '@/services/api';
 
+function toIsoStringSafe(value: string, fieldLabel: string): string {
+  if (!value || !value.trim()) {
+    throw new Error(`Please provide a valid ${fieldLabel}.`);
+  }
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) {
+    throw new Error(`Please provide a valid ${fieldLabel}.`);
+  }
+  return parsed.toISOString();
+}
+
 export interface CreateOfferParams {
   name: string;
   offerCode?: string | null;
@@ -83,8 +94,8 @@ export function useCreateOffer(): UseCreateOfferReturn {
             params.maxDiscountAmount != null && params.maxDiscountAmount > 0
               ? Number(params.maxDiscountAmount)
               : null,
-          valid_from: new Date(params.startAt).toISOString(),
-          valid_to: new Date(params.endAt).toISOString(),
+          valid_from: toIsoStringSafe(params.startAt, 'start date & time'),
+          valid_to: toIsoStringSafe(params.endAt, 'end date & time'),
           category_ids,
           menu_item_ids,
         };
@@ -210,8 +221,8 @@ export function useUpdateOffer(): UseUpdateOfferReturn {
               ? Number(params.maxDiscountAmount)
               : null;
         }
-        if (params.startAt !== undefined) payload.valid_from = new Date(params.startAt).toISOString();
-        if (params.endAt !== undefined) payload.valid_to = new Date(params.endAt).toISOString();
+        if (params.startAt !== undefined) payload.valid_from = toIsoStringSafe(params.startAt, 'start date & time');
+        if (params.endAt !== undefined) payload.valid_to = toIsoStringSafe(params.endAt, 'end date & time');
         if (category_ids !== undefined) payload.category_ids = category_ids;
         if (menu_item_ids !== undefined) payload.menu_item_ids = menu_item_ids;
 

@@ -22,8 +22,8 @@ from app.services.restaurant import (
     update_restaurant_profile,
 )
 from app.services.s3_service import (
+    generate_public_url,
     generate_upload_url,
-    generate_view_url,
     get_object_metadata,
 )
 
@@ -165,7 +165,7 @@ def confirm_restaurant_image_upload(
 
     db.commit()
 
-    view_url = generate_view_url(payload.object_key)
+    view_url = generate_public_url(payload.object_key)
     return {
         "success": True,
         "message": "Image upload confirmed successfully.",

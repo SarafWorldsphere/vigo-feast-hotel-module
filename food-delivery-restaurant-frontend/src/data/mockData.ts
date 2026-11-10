@@ -301,7 +301,7 @@ export const mockComplaints: Complaint[] = [];
 
 // ===== Refunds & Payments mock data =====
 
-export type RefundStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+export type RefundStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 export type RefundType = 'FULL' | 'PARTIAL';
 
 export interface RefundItem {
@@ -327,6 +327,7 @@ export interface Refund {
   payment_method: string;
   original_amount: number;
   failed_reason?: string;
+  rejection_reason?: string;
   created_at: string;
   updated_at?: string;
   completed_at?: string | null;
@@ -344,7 +345,9 @@ export interface Payment {
 }
 
 export const refundStatusConfig: Record<RefundStatus, { label: string; bg: string; text: string; dot: string }> = {
-  PENDING: { label: 'Pending', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500' },
+  PENDING: { label: 'Pending Admin Review', bg: 'bg-amber-50 dark:bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500' },
+  APPROVED: { label: 'Approved', bg: 'bg-indigo-50 dark:bg-indigo-500/10', text: 'text-indigo-700 dark:text-indigo-400', dot: 'bg-indigo-500' },
+  REJECTED: { label: 'Rejected', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400', dot: 'bg-red-500' },
   PROCESSING: { label: 'Processing', bg: 'bg-blue-50 dark:bg-blue-500/10', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500 animate-pulse' },
   COMPLETED: { label: 'Completed', bg: 'bg-emerald-50 dark:bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500' },
   FAILED: { label: 'Failed', bg: 'bg-red-50 dark:bg-red-500/10', text: 'text-red-700 dark:text-red-400', dot: 'bg-red-500' },

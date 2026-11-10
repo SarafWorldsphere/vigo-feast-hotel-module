@@ -22,15 +22,40 @@ from app.api.v1.routes.notifications import router as notifications_router
 from app.api.v1.routes import restaurant_hours
 import asyncio
 from contextlib import asynccontextmanager
+import logging
+from pathlib import Path
 
+from app.db.database import engine
 from app.services.order_listener import OrderListener
 from app.services.websocket_manager import websocket_manager
 
+logger = logging.getLogger(__name__)
 order_listener = OrderListener(websocket_manager)
+
+
+def apply_startup_migrations() -> None:
+    """Apply idempotent SQL schema migrations so ORM columns match PostgreSQL."""
+    migrations_dir = Path(__file__).resolve().parent.parent / "database" / "migrations"
+    if not migrations_dir.is_dir():
+        return
+    sql_files = sorted(migrations_dir.glob("*.sql"))
+    if not sql_files:
+        return
+    try:
+        with engine.begin() as conn:
+            for sql_file in sql_files:
+                sql_text = sql_file.read_text(encoding="utf-8").strip()
+                if sql_text:
+                    conn.exec_driver_sql(sql_text)
+                    logger.info("Applied migration: %s", sql_file.name)
+    except Exception as exc:
+        logger.warning("Startup migration check skipped or failed: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(apply_startup_migrations)
+
     loop = asyncio.get_running_loop()
     order_listener.loop = loop
     websocket_manager.loop = loop

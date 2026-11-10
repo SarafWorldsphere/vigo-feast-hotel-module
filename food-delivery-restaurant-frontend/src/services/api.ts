@@ -2186,6 +2186,8 @@ export type RefundDestination =
 
 export type RefundStatus =
   | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
   | 'PROCESSING'
   | 'COMPLETED'
   | 'FAILED';
@@ -2195,6 +2197,11 @@ export interface RefundCreatePayload {
   reason: string;
   destination_method: RefundDestination;
   idempotency_key: string;
+}
+
+export interface RefundRequestPayload extends RefundCreatePayload {
+  order_id: number;
+  complaint_id?: number;
 }
 
 export interface BackendRefund {
@@ -2208,10 +2215,12 @@ export interface BackendRefund {
   destination_method: RefundDestination | null;
   execution_reference: string | null;
   failure_reason: string | null;
+  rejection_reason: string | null;
   idempotency_key: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  status_updated_at: string | null;
 }
 
 export type RefundResponse = BackendRefund;
@@ -2233,6 +2242,18 @@ export async function apiCreateComplaintRefund(
   );
 }
 
+/** Creates a PENDING owner request; no Razorpay call is made by this app. */
+export async function apiSubmitRefundRequest(payload: RefundRequestPayload): Promise<BackendRefund> {
+  return request<BackendRefund>('/api/v1/refunds/request', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiGetRefund(refundId: number | string): Promise<BackendRefund> {
+  return request<BackendRefund>(`/api/v1/refunds/${encodeURIComponent(refundId)}`, { method: 'GET' });
+}
+
 export interface BackendRefundListResponse {
   items: BackendRefund[];
   total: number;
@@ -2240,7 +2261,7 @@ export interface BackendRefundListResponse {
 export type RefundListResponse = BackendRefundListResponse;
 
 export async function apiGetRefunds(params?: {
-  status?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status?: RefundStatus;
   limit?: number;
   offset?: number;
 }): Promise<RefundListResponse> {

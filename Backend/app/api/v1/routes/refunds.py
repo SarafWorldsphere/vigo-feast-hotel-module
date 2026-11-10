@@ -8,11 +8,12 @@ from app.core.security import get_current_owner
 from app.db.database import get_db
 from app.schemas.refunds import (
     RefundCreate,
+    RefundRequestCreate,
     RefundResponse,
     RefundListResponse,
 )
 from app.services.restaurant import get_owner_restaurant
-from app.services.refunds import create_refund, list_refunds
+from app.services.refunds import create_refund, create_refund_request, get_owner_refund, list_refunds
 
 
 router = APIRouter(
@@ -46,6 +47,26 @@ def create_complaint_refund(
     )
 
 
+@router.post(
+    "/refunds/request",
+    response_model=RefundResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_refund_request(
+    payload: RefundRequestCreate,
+    db: Session = Depends(get_db),
+    owner=Depends(get_current_owner),
+):
+    """Persist an owner request only; platform administration executes refunds."""
+    restaurant = get_owner_restaurant(db=db, owner_id=owner.id)
+    return create_refund_request(
+        db=db,
+        restaurant_id=restaurant.id,
+        owner_id=owner.id,
+        payload=payload,
+    )
+
+
 @router.get(
     "/refunds",
     response_model=RefundListResponse,
@@ -68,3 +89,16 @@ def get_refunds(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/refunds/{refund_id}",
+    response_model=RefundResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_refund(
+    refund_id: int,
+    db: Session = Depends(get_db),
+    owner=Depends(get_current_owner),
+):
+    return get_owner_refund(db=db, owner_id=owner.id, refund_id=refund_id)

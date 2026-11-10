@@ -39,6 +39,16 @@ class Refund(Base):
         index=True,
     )
 
+    # Stored explicitly so owner and platform queries do not need to infer
+    # tenancy through an order join.  It is populated only by the owner
+    # request service after ownership validation.
+    restaurant_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("vgf_restaurants.id"),
+        nullable=True,
+        index=True,
+    )
+
     payment_id = Column(
         BigInteger,
         ForeignKey("vgf_payments.payment_id"),
@@ -74,6 +84,11 @@ class Refund(Base):
     execution_reference = Column(String(255), nullable=True)
 
     failure_reason = Column(Text, nullable=True)
+
+    # These fields are written by the platform-admin system through the
+    # shared backend/database, never by owner-facing routes.
+    rejection_reason = Column(Text, nullable=True)
+    status_updated_at = Column(DateTime(timezone=True), nullable=True)
 
     idempotency_key = Column(
         UUID(as_uuid=True),
@@ -113,7 +128,7 @@ class Refund(Base):
             name="chk_vgf_refunds_amount",
         ),
         CheckConstraint(
-            "status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')",
+            "status IN ('PENDING', 'APPROVED', 'REJECTED', 'PROCESSING', 'COMPLETED', 'FAILED')",
             name="chk_vgf_refunds_status",
         ),
         CheckConstraint(

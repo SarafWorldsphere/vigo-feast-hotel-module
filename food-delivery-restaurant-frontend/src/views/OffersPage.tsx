@@ -29,6 +29,37 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'expired', label: 'Expired' },
 ];
 
+function formatDateTimeLocalInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getDefaultStartDateTimeLocal(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return formatDateTimeLocalInput(d);
+}
+
+function getDefaultEndDateTimeLocal(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  d.setHours(23, 59, 0, 0);
+  return formatDateTimeLocalInput(d);
+}
+
+function toDateTimeLocalValue(value: string | null | undefined, fallback: string): string {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) return fallback;
+  return formatDateTimeLocalInput(parsed);
+}
+
+function parseDateSafe(value: string): Date | null {
+  if (!value || !value.trim()) return null;
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function getOfferStatus(offer: Offer): OfferStatus {
   if (offer.status) {
     const s = offer.status.toUpperCase();
@@ -39,8 +70,8 @@ function getOfferStatus(offer: Offer): OfferStatus {
   const now = new Date();
   const start = new Date(offer.startAt);
   const end = new Date(offer.endAt);
-  if (now < start) return 'SCHEDULED';
-  if (now > end) return 'EXPIRED';
+  if (!isNaN(start.getTime()) && now < start) return 'SCHEDULED';
+  if (!isNaN(end.getTime()) && now > end) return 'EXPIRED';
   return 'ACTIVE';
 }
 
@@ -288,6 +319,7 @@ export function OffersPage() {
       {/* Create/Edit modal */}
       {showCreateModal && (
         <OfferEditorModal
+          key={editingOffer?.id ?? 'new'}
           offer={editingOffer}
           categories={categories}
           menuItems={menuItems}
@@ -485,12 +517,18 @@ function OfferEditorModal({
   const [minOrder, setMinOrder] = useState<string>(
     offer?.minimumOrderAmount ? String(offer.minimumOrderAmount) : ''
   );
-  const [startAt, setStartAt] = useState(offer?.startAt ? offer.startAt.slice(0, 16) : '2026-10-01T00:00');
-  const [endAt, setEndAt] = useState(offer?.endAt ? offer.endAt.slice(0, 16) : '2026-10-31T23:59');
+  const [startAt, setStartAt] = useState(() =>
+    toDateTimeLocalValue(offer?.startAt, getDefaultStartDateTimeLocal())
+  );
+  const [endAt, setEndAt] = useState(() =>
+    toDateTimeLocalValue(offer?.endAt, getDefaultEndDateTimeLocal())
+  );
   const [selectedCategories, setSelectedCategories] = useState<string[]>(offer?.applicableCategories ?? []);
   const [selectedItems, setSelectedItems] = useState<string[]>(offer?.applicableItems ?? []);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const handleNumericInput = (val: string, setter: (v: string) => void) => {
+    if (formError) setFormError(null);
     if (val === '') {
       setter('');
       return;
@@ -525,18 +563,46 @@ function OfferEditorModal({
   };
 
   const handleSave = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setFormError('Please enter an offer name.');
+      return;
+    }
+
+    const parsedDiscount = parseFloat(discountValue) || 0;
+    if (parsedDiscount <= 0) {
+      setFormError('Please enter a discount value greater than 0.');
+      return;
+    }
+    if (offerType === 'PERCENTAGE' && parsedDiscount > 100) {
+      setFormError('Percentage discount cannot exceed 100%.');
+      return;
+    }
+
+    const parsedStart = parseDateSafe(startAt);
+    const parsedEnd = parseDateSafe(endAt);
+
+    if (!parsedStart || !parsedEnd) {
+      setFormError('Please enter valid Start and End dates & times.');
+      return;
+    }
+
+    if (parsedStart.getTime() >= parsedEnd.getTime()) {
+      setFormError('End Date & Time must be after Start Date & Time.');
+      return;
+    }
+
+    setFormError(null);
     onSave({
       id: offer?.id ?? `o-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name: name.trim(),
       offerCode: offerCode.trim() ? offerCode.trim().toUpperCase() : undefined,
       offerType,
-      discountValue: parseFloat(discountValue) || 0,
+      discountValue: parsedDiscount,
       maxDiscountAmount: parseFloat(maxDiscount) || 0,
       minimumOrderAmount: parseFloat(minOrder) || 0,
-      startAt: new Date(startAt).toISOString(),
-      endAt: new Date(endAt).toISOString(),
-      isActive: true,
+      startAt: parsedStart.toISOString(),
+      endAt: parsedEnd.toISOString(),
+      isActive: offer?.isActive ?? true,
       applicableItems: selectedItems,
       applicableCategories: selectedCategories,
       usageCount: offer?.usageCount ?? 0,
@@ -559,7 +625,16 @@ function OfferEditorModal({
         <div className="p-4 space-y-4">
           <div>
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Offer Name</label>
-            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weekend Special 20% Off" autoFocus />
+            <input
+              className="input mt-1"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (formError) setFormError(null);
+              }}
+              placeholder="e.g. Weekend Special 20% Off"
+              autoFocus
+            />
           </div>
 
           <div>
@@ -574,7 +649,10 @@ function OfferEditorModal({
                 <button
                   key={t.value}
                   type="button"
-                  onClick={() => setOfferType(t.value)}
+                  onClick={() => {
+                    setOfferType(t.value);
+                    if (formError) setFormError(null);
+                  }}
                   className={`px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     offerType === t.value
                       ? 'bg-brand-500 text-white'
@@ -629,11 +707,29 @@ function OfferEditorModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Start Date & Time</label>
-              <input type="datetime-local" className="input mt-1" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+              <input
+                type="datetime-local"
+                className="input mt-1"
+                value={startAt}
+                onChange={(e) => {
+                  setStartAt(e.target.value);
+                  if (formError) setFormError(null);
+                }}
+                required
+              />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400">End Date & Time</label>
-              <input type="datetime-local" className="input mt-1" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+              <input
+                type="datetime-local"
+                className="input mt-1"
+                value={endAt}
+                onChange={(e) => {
+                  setEndAt(e.target.value);
+                  if (formError) setFormError(null);
+                }}
+                required
+              />
             </div>
           </div>
 
@@ -678,6 +774,13 @@ function OfferEditorModal({
               ))}
             </div>
           </div>
+
+          {formError && (
+            <div className="p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

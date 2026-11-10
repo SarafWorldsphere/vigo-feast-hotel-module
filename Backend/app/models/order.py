@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -19,6 +21,13 @@ from app.db.database import Base
 
 class Order(Base):
     __tablename__ = "vgf_orders"
+
+    id = Column(
+        String,
+        unique=True,
+        nullable=False,
+        default=lambda: str(uuid.uuid4()),
+    )
 
     order_id = Column(
         BigInteger().with_variant(Integer, "sqlite"),

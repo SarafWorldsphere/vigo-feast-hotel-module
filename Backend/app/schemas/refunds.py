@@ -15,6 +15,8 @@ RefundDestination = Literal[
 
 RefundStatus = Literal[
     "PENDING",
+    "APPROVED",
+    "REJECTED",
     "PROCESSING",
     "COMPLETED",
     "FAILED",
@@ -22,6 +24,7 @@ RefundStatus = Literal[
 
 
 class RefundCreate(BaseModel):
+    """Legacy complaint-route payload, retained for existing clients."""
     amount: Decimal = Field(
         gt=0,
         max_digits=10,
@@ -31,8 +34,13 @@ class RefundCreate(BaseModel):
         min_length=1,
         max_length=255,
     )
-    destination_method: RefundDestination
+    destination_method: Optional[RefundDestination] = "ORIGINAL_PAYMENT_METHOD"
     idempotency_key: UUID
+
+
+class RefundRequestCreate(RefundCreate):
+    order_id: int
+    complaint_id: Optional[int] = None
 
 
 class RefundResponse(BaseModel):
@@ -40,6 +48,7 @@ class RefundResponse(BaseModel):
 
     refund_id: int
     order_id: int
+    restaurant_id: Optional[UUID] = None
     complaint_id: Optional[int] = None
     initiated_by_owner_id: Optional[UUID] = None
 
@@ -50,11 +59,13 @@ class RefundResponse(BaseModel):
 
     execution_reference: Optional[str] = None
     failure_reason: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
     idempotency_key: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+    status_updated_at: Optional[datetime] = None
 
 
 class RefundListResponse(BaseModel):
