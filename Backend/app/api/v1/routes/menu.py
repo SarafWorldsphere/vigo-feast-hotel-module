@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_owner
@@ -15,6 +16,8 @@ from app.db.database import get_db
 from app.models.media_upload import MediaUpload
 from app.models.menu_category import MenuCategory
 from app.models.menu_item import MenuItem
+from app.models.offer import OfferItem
+from app.models.order_item import OrderItem
 from app.models.restaurant import Restaurant
 from app.models.restaurant_owner import RestaurantOwner
 from app.schemas.menu import (
@@ -26,7 +29,6 @@ from app.schemas.menu import (
     MenuItemUpdateRequest,
 )
 from app.services.s3_service import (
-    delete_object,
     delete_s3_object,
     extract_s3_key,
     generate_public_url,
@@ -863,13 +865,14 @@ def delete_menu_item(
     owner: RestaurantOwner = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ):
-    # 1. Verify that the item belongs to the authenticated owner
+    # 1. Verify that the item exists and belongs to the authenticated owner's restaurant
     menu_item = (
         db.query(MenuItem)
         .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
         .filter(
             MenuItem.id == item_id,
             Restaurant.owner_id == owner.id,
+            Restaurant.is_deleted.is_(False),
             MenuItem.is_deleted.is_(False),
         )
         .first()
@@ -881,69 +884,173 @@ def delete_menu_item(
             detail="Menu item not found for your restaurant.",
         )
 
-    # 2. Keep the S3 key before changing the database record
+    # 2. Preserve key & restaurant reference before mutating/deleting the item row
+    restaurant_id = menu_item.restaurant_id
     image_key = menu_item.image_key
+    clean_key = extract_s3_key(image_key) if image_key else None
 
-    # 3. Soft-delete the menu item
-    menu_item.is_deleted = True
-    menu_item.is_active = False
+    # Remove any offer-item mappings referencing this menu item
+    db.query(OfferItem).filter(
+        OfferItem.menu_item_id == item_id
+    ).delete(synchronize_session=False)
 
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to delete menu item from database: %s", item_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete menu item.",
+    # 3. Hard-delete from database when no historical orders reference this item;
+    # otherwise soft-delete so past order records and receipts remain intact.
+    has_order_history = (
+        db.query(OrderItem.order_item_id)
+        .filter(OrderItem.menu_item_id == item_id)
+        .first()
+        is not None
+    )
+
+    hard_deleted = False
+    if not has_order_history:
+        try:
+            db.delete(menu_item)
+            db.commit()
+            hard_deleted = True
+        except IntegrityError:
+            db.rollback()
+            logger.info(
+                "Falling back to soft-delete for menu item %s due to database references.",
+                item_id,
+            )
+            menu_item = (
+                db.query(MenuItem)
+                .filter(MenuItem.id == item_id)
+                .first()
+            )
+            if not menu_item:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to delete menu item.",
+                )
+            db.query(OfferItem).filter(
+                OfferItem.menu_item_id == item_id
+            ).delete(synchronize_session=False)
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to delete menu item from database: %s", item_id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete menu item.",
+            )
+
+    if not hard_deleted:
+        menu_item.is_deleted = True
+        menu_item.is_active = False
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to delete menu item from database: %s", item_id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete menu item.",
+            )
+
+    # 4. Delete the image from S3 (unless shared by another active item) and update upload tracking
+    image_deleted = False
+    image_cleanup_pending = False
+
+    if clean_key:
+        candidate_keys = list(dict.fromkeys(k for k in (image_key, clean_key) if k))
+        if clean_key.startswith("restaurants/"):
+            public_url = generate_public_url(clean_key)
+            if public_url not in candidate_keys:
+                candidate_keys.append(public_url)
+
+        image_in_use = (
+            db.query(MenuItem.id)
+            .filter(
+                MenuItem.image_key.in_(candidate_keys),
+                MenuItem.id != item_id,
+                MenuItem.is_deleted.is_(False),
+            )
+            .first()
+            is not None
         )
 
-    # 4. Delete the image from S3. Retain image_key when cleanup fails so it
-    # can be retried while the menu item remains soft-deleted.
-    image_deleted = not bool(image_key)
-    if image_key:
-        clean_key = extract_s3_key(image_key)
-        if clean_key:
-            try:
-                # Do not remove a shared object that an active item still uses.
-                image_in_use = (
-                    db.query(MenuItem.id)
-                    .filter(
-                        (MenuItem.image_key == image_key) | (MenuItem.image_key == clean_key),
-                        MenuItem.id != item_id,
-                        MenuItem.is_deleted.is_(False),
+        if image_in_use:
+            logger.info(
+                "Image %s is still in use by another active menu item; skipping S3 deletion.",
+                clean_key,
+            )
+            if not hard_deleted:
+                try:
+                    menu_item.image_key = None
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Failed to clear shared image_key on soft-deleted menu item %s",
+                        item_id,
                     )
-                    .first()
+        else:
+            upload_records = (
+                db.query(MediaUpload)
+                .filter(
+                    MediaUpload.restaurant_id == restaurant_id,
+                    MediaUpload.object_key.in_(candidate_keys),
                 )
-                if not image_in_use:
-                    delete_object(clean_key)
-                else:
-                    logger.info("Image %s is still in use by another item.", clean_key)
-
-                # The object was deleted or is shared by another active item;
-                # this soft-deleted item no longer needs to retain its key.
-                menu_item.image_key = None
+                .all()
+            )
+            try:
+                image_deleted = bool(delete_s3_object(clean_key))
+                now_utc = datetime.now(timezone.utc)
+                for record in upload_records:
+                    record.status = "DELETED"
+                    record.deleted_at = now_utc
+                if not hard_deleted:
+                    menu_item.image_key = None
                 db.commit()
-                image_deleted = True
             except Exception:
                 db.rollback()
                 image_deleted = False
+                image_cleanup_pending = True
                 logger.exception(
-                    "Menu item %s was deleted, but S3 image cleanup failed: %s",
+                    "Menu item %s was removed from menu, but S3 image cleanup failed: %s",
                     item_id,
                     clean_key,
                 )
-        else:
-            logger.warning(
-                "Menu item %s was deleted, but image key is invalid: %r",
-                item_id,
-                image_key,
-            )
+                try:
+                    db.query(MediaUpload).filter(
+                        MediaUpload.restaurant_id == restaurant_id,
+                        MediaUpload.object_key.in_(candidate_keys),
+                    ).update(
+                        {"status": "DELETION_PENDING"},
+                        synchronize_session=False,
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Failed to mark MediaUpload as DELETION_PENDING for key %s",
+                        clean_key,
+                    )
+    elif image_key:
+        logger.info(
+            "Menu item %s deleted with non-S3 image reference %r; skipping S3 deletion.",
+            item_id,
+            image_key,
+        )
+        if not hard_deleted:
+            try:
+                menu_item.image_key = None
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "Failed to clear non-S3 image_key on soft-deleted menu item %s",
+                    item_id,
+                )
 
     # 5. Return the result
     return {
         "success": True,
         "message": "Menu item deleted successfully",
         "item_id": str(item_id),
-        "image_cleanup_pending": bool(image_key) and not image_deleted,
+        "deleted_from_db": hard_deleted,
+        "image_deleted": image_deleted,
+        "image_cleanup_pending": image_cleanup_pending,
     }

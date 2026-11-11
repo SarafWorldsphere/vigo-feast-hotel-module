@@ -4,7 +4,7 @@ import { MenuItem, ItemAvailability, Category, Offer } from '@/data/mockData';
 import { FoodImage } from '@/components/ui/FoodImage';
 import {
   Plus, Search, GripVertical, Eye, EyeOff, Clock, Star, X,
-  ChevronUp, ChevronDown, Pencil, Check, ImagePlus, Leaf, Drumstick, Egg,
+  ChevronUp, ChevronDown, Pencil, Trash2, Check, ImagePlus, Leaf, Drumstick, Egg,
   Loader2, AlertCircle, Upload, Tag, Percent,
 } from 'lucide-react';
 import {
@@ -119,7 +119,7 @@ function calculateDiscountedPrice(itemPrice: number, offer: Offer): number {
 }
 
 export function MenuPage() {
-  const { menuItems, categories, offers, loadOffers, loadCategories, updateMenuItem, updateMenuItemAvailability, addMenuItem, createMenuItem, reorderCategories, toggleCategoryVisible, addCategory, addToast } = useApp();
+  const { menuItems, categories, offers, loadOffers, loadCategories, updateMenuItem, removeMenuItem, updateMenuItemAvailability, addMenuItem, createMenuItem, reorderCategories, toggleCategoryVisible, addCategory, addToast } = useApp();
 
   useEffect(() => {
     loadCategories();
@@ -129,6 +129,9 @@ export function MenuPage() {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [deletingItem, setDeletingItem] = useState<MenuItem | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [draggedCategory, setDraggedCategory] = useState<number | null>(null);
@@ -222,6 +225,50 @@ export function MenuPage() {
     await addCategory(name, visible);
     await loadCategories();
     setShowCategoryModal(false);
+  };
+
+  const handleRequestDeleteItem = (itemToDelete: MenuItem) => {
+    setDeleteError('');
+    setDeletingItem(itemToDelete);
+  };
+
+  const handleConfirmDeleteItem = async () => {
+    if (!deletingItem || isDeletingItem) return;
+    const targetItem = deletingItem;
+    setDeleteError('');
+    setIsDeletingItem(true);
+
+    try {
+      const result = await removeMenuItem(targetItem.id);
+      if (editingItem?.id === targetItem.id) {
+        setEditingItem(null);
+      }
+      setDeletingItem(null);
+      void loadOffers();
+      if (result?.image_cleanup_pending) {
+        addToast({
+          type: 'warning',
+          title: 'Item deleted (image cleanup pending)',
+          message: `${targetItem.name} was deleted from the database, but its S3 image could not be removed automatically.`,
+        });
+      } else {
+        addToast({
+          type: 'success',
+          title: 'Item deleted',
+          message: targetItem.name,
+        });
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to delete menu item. Please try again.';
+      setDeleteError(msg);
+      addToast({
+        type: 'error',
+        title: 'Delete failed',
+        message: msg,
+      });
+    } finally {
+      setIsDeletingItem(false);
+    }
   };
 
   return (
@@ -380,6 +427,7 @@ export function MenuPage() {
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     toggleAvailability(item);
@@ -424,16 +472,37 @@ export function MenuPage() {
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{item.name}</h4>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingItem(item);
-                    }}
-                    className="text-gray-400 hover:text-brand-500 transition-colors shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                    title="Edit dish"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingItem(item);
+                      }}
+                      className="text-gray-400 hover:text-brand-500 transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                      title="Edit dish"
+                      aria-label={`Edit ${item.name}`}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRequestDeleteItem(item);
+                      }}
+                      disabled={isDeletingItem && deletingItem?.id === item.id}
+                      className="text-gray-400 hover:text-red-500 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+                      title="Delete dish"
+                      aria-label={`Delete ${item.name}`}
+                    >
+                      {isDeletingItem && deletingItem?.id === item.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 line-clamp-1">{item.description}</p>
                 <div className="flex items-center justify-between">
@@ -512,6 +581,7 @@ export function MenuPage() {
           item={editingItem}
           categories={categories}
           onClose={() => setEditingItem(null)}
+          onDelete={() => handleRequestDeleteItem(editingItem)}
           onSave={async (updates) => {
             await updateMenuItem(editingItem.id, updates);
             if (
@@ -553,6 +623,22 @@ export function MenuPage() {
         <AddCategoryModal
           onClose={() => setShowCategoryModal(false)}
           onSave={handleAddCategory}
+        />
+      )}
+
+      {/* Delete menu item confirmation modal */}
+      {deletingItem && (
+        <DeleteItemConfirmModal
+          item={deletingItem}
+          isDeleting={isDeletingItem}
+          error={deleteError}
+          onCancel={() => {
+            if (!isDeletingItem) {
+              setDeletingItem(null);
+              setDeleteError('');
+            }
+          }}
+          onConfirm={handleConfirmDeleteItem}
         />
       )}
     </div>
@@ -694,13 +780,14 @@ function AddCategoryModal({ onClose, onSave }: {
   );
 }
 
-function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose, onSave }: {
+function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose, onSave, onDelete }: {
   item?: MenuItem;
   mode?: 'edit' | 'add';
   defaultCategory?: string;
   categories?: Category[];
   onClose: () => void;
   onSave?: (updates: Partial<MenuItem> | MenuItem) => Promise<void> | void;
+  onDelete?: () => void;
 }) {
   const { createMenuItem, loadCategories, addToast, offers, categories: contextCategories } = useApp();
   const availableCategories = categories.length > 0 ? categories : contextCategories;
@@ -1489,7 +1576,19 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
         </div>
 
         {/* Footer */}
-        <div className="flex gap-2 p-4 border-t border-gray-200 dark:border-gray-800 sticky bottom-0 bg-white dark:bg-gray-900 z-10">
+        <div className="flex items-center gap-2 p-4 border-t border-gray-200 dark:border-gray-800 sticky bottom-0 bg-white dark:bg-gray-900 z-10">
+          {!isAdd && onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={isSubmitting}
+              className="btn-ghost px-3 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 shrink-0 disabled:opacity-50"
+              title="Delete dish"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          )}
           <button type="button" onClick={onClose} disabled={isSubmitting} className="btn-secondary flex-1 disabled:opacity-50">
             Cancel
           </button>
@@ -1529,6 +1628,99 @@ function ItemEditorModal({ item, mode, defaultCategory, categories = [], onClose
         </div>
       </div>
 
+    </div>
+  );
+}
+
+function DeleteItemConfirmModal({
+  item,
+  isDeleting,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  item: MenuItem;
+  isDeleting: boolean;
+  error?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/45 backdrop-blur-sm animate-fade-in"
+        onClick={() => {
+          if (!isDeleting) {
+            onCancel();
+          }
+        }}
+      />
+      <div className="relative card w-full sm:max-w-sm rounded-b-none sm:rounded-2xl animate-slide-up overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-red-50 dark:bg-red-500/10 flex items-center justify-center text-red-600 dark:text-red-400">
+              <Trash2 className="w-4 h-4" />
+            </div>
+            <h2 className="font-bold text-base text-gray-900 dark:text-white">
+              Delete Menu Item
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="btn-ghost p-2 disabled:opacity-50"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+            Are you sure you want to delete{' '}
+            <span className="font-semibold text-gray-900 dark:text-white">
+              {item.name}
+            </span>
+            ? This will permanently delete the item from your menu and remove its image.
+          </p>
+
+          {error && (
+            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="btn-secondary flex-1 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="btn-danger flex-1 flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            {isDeleting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Deleting...</span>
+              </>
+            ) : (
+              <>
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

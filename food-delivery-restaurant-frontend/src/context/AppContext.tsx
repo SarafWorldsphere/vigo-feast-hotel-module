@@ -28,6 +28,7 @@ import {
   apiCreateMenuItem,
   apiUpdateMenuItem,
   apiDeleteMenuItem,
+  DeleteMenuItemResponse,
   MenuItemUpdateRequest,
   apiGetMenuItems,
   apiUpdateMenuItemAvailability,
@@ -134,7 +135,7 @@ interface AppState {
   viewOrder: (id: string) => void;
   menuItems: MenuItem[];
   updateMenuItem: (id: string, updates: Partial<MenuItem>) => Promise<MenuItem | void> | void;
-  removeMenuItem: (id: string) => Promise<void> | void;
+  removeMenuItem: (id: string) => Promise<DeleteMenuItemResponse>;
   updateMenuItemAvailability: (id: string, availability: ItemAvailability) => Promise<MenuItem>;
   addMenuItem: (item: MenuItem) => void;
   createMenuItem: (payload: MenuItemCreateRequest) => Promise<MenuItem>;
@@ -1091,13 +1092,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [categories]);
 
-  const removeMenuItem = useCallback(async (id: string): Promise<void> => {
+  const removeMenuItem = useCallback(async (id: string): Promise<DeleteMenuItemResponse> => {
     try {
-      await apiDeleteMenuItem(id);
+      const response = await apiDeleteMenuItem(id);
       setMenuItems((prev) => prev.filter((item) => item.id !== id));
+      return response;
     } catch (err) {
       console.error('Failed to delete menu item from database:', err);
-      setMenuItems((prev) => prev.filter((item) => item.id !== id));
       throw err;
     }
   }, []);

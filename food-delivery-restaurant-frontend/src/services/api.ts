@@ -854,15 +854,20 @@ export async function apiUpdateMenuItem(
   );
 }
 
-export async function apiDeleteMenuItem(
-  itemId: string
-): Promise<{
+export interface DeleteMenuItemResponse {
+  success?: boolean;
   message: string;
   item_id: string;
+  deleted_from_db?: boolean;
   image_deleted: boolean;
   image_cleanup_pending: boolean;
-}> {
-  return request(
+}
+
+/** DELETE /api/v1/menu/items/{item_id} */
+export async function apiDeleteMenuItem(
+  itemId: string
+): Promise<DeleteMenuItemResponse> {
+  return request<DeleteMenuItemResponse>(
     `/api/v1/menu/items/${encodeURIComponent(itemId)}`,
     {
       method: 'DELETE',
